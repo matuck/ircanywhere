@@ -1,17 +1,17 @@
 App.SidebarController = Ember.ArrayController.extend(App.Notification, {
-	increment: false,
+	needs: ['index', 'network'],
 
-	sortProperties: ['url'],
-	sortAscending: true,
+	increment: false,
 
 	content: function() {
 		var selectedTab = this.get('user.selectedTab');
 
-		return this.get('socket.tabs').map(function (tab) {
+		this.get('socket.tabs').map(function (tab) {
 			tab.set('selected', tab.url === selectedTab);
-
 			return tab;
 		});
+
+		return this.get('socket.tabs').sortBy('url');
 	}.property('user.selectedTab', 'socket.tabs'),
 
 	statusChanged: function() {
@@ -33,18 +33,23 @@ App.SidebarController = Ember.ArrayController.extend(App.Notification, {
 	newTabMessage: function(object, backlog) {
 		var self = this;
 
-		this.get('socket.tabs').forEach(function(tab) {
-			var network = self.get('socket.networks').findBy('_id', tab.network);
+		var tabs = this.socket.find('tabs', {network: object.network}),
+			network = this.get('socket.networks').findBy('_id', object.network);
 
+		if (!tabs || !network) {
+			return;
+		}
+
+		tabs.forEach(function(tab) {
 			if (tab.type === 'channel' && object.target === tab.target) {
 				self.incrementCounters(network, tab, object, backlog);
-			} else if (tab.type === 'query' && (object.target === tab.target || (object.target === network.nick && object.message.nickname.toLowerCase() === tab.target))) {
+			} else if (tab.type === 'query' && (Helpers.compareStrings(object.target, tab.target, true) || (Helpers.compareStrings(object.target, network.nick, true) && Helpers.compareStrings(object.message.nickname, tab.target, true)))) {
 				self.incrementCounters(network, tab, object, backlog);
 			} else if (tab.type === 'network' && object.target === '*') {
 				self.incrementCounters(network, tab, object, backlog);
 			}
+			// we need to dig a little deeper to find out the exact tab this message is in
 		});
-		// we need to dig a little deeper to find out the exact tab this message is in
 	},
 
 	incrementCounters: function(network, tab, object, backlog) {
@@ -97,7 +102,18 @@ App.SidebarController = Ember.ArrayController.extend(App.Notification, {
 	},
 
 	onRemovedTab: function() {
-		window.history.back();
+		var tabHistory = this.get('controllers.index.history'),
+			lastItem = tabHistory[tabHistory.length - 3];
+
+		if (lastItem) {
+			document.location.href = lastItem;
+		} else {
+			var tab = this.get('controllers.network.selectedTab');
+			
+			if (tab) {
+				document.location.href = '#/t/' + tab.url.split('/')[0];
+			}
+		}
 	},
 
 	_updateQuery: function(object) {
@@ -105,11 +121,11 @@ App.SidebarController = Ember.ArrayController.extend(App.Notification, {
 			query;
 
 		if (object.type === 'network') {
-			query = {network: object.networkName, target: '*'};
+			query = {network: object.network, target: '*'};
 		} else if (object.type === 'query') {
-			query = {network: object.networkName, $or: [{target: object.target}, {'message.nickname': object.target, target: network.nick}]};
+			query = {network: object.network, $or: [{target: object.target}, {'message.nickname': object.target, target: network.nick}]};
 		} else if (object.type === 'channel') {
-			query = {network: object.networkName, target: object.target};
+			query = {network: object.network, target: object.target};
 		}
 
 		object.set('query', query);

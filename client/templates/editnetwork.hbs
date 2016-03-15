@@ -1,6 +1,7 @@
 {{#modal-dialog action="close"}}
-	<div class="modal-header">
+	<div class="modal-header clearfix">
 		<h3>{{title}}</h3>
+		<i class="fa fa-times close-icon"></i>
 	</div>
 	<div class="modal-body">
 		<form method="post" {{action "networkSubmit" on="submit"}}>
@@ -22,7 +23,7 @@
 					<label for="server">Hostname</label>
 					<div class="input">
 						<div class="field">
-							{{input type="text" id="server" valueBinding="model.server" value=server tabindex="1"}}
+							{{input type="text" id="server" valueBinding="model.server" value=server tabindex="1" autofocus="true"}}
 						</div>
 						<span class="tooltip">
 							<a href="#" rel="twipsy" title="The hostname of the network">?</a>

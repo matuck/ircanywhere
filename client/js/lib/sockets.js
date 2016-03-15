@@ -28,6 +28,8 @@ Ember.Socket = Ember.Object.extend({
 				return false;
 			}
 
+			self._loadComplete(true);
+
 			Ember.run.later(self._flushData.bind(self), 1000);
 			// show the popup
 
@@ -52,6 +54,14 @@ Ember.Socket = Ember.Object.extend({
 		// bind events
 
 		this.set('socket', socket);
+	},
+
+	_loadComplete: function (complete) {
+		if (complete) {
+			Ember.$('body div.loading').hide();
+		} else {
+			Ember.$('body div.loading').show();
+		}
 	},
 
 	_generateInterval: function(k) {
@@ -90,7 +100,7 @@ Ember.Socket = Ember.Object.extend({
 		// alter the done variable when we're actually done
 
 		if (document.cookie) {
-			this._send('authenticate', document.cookie);
+			this._send('authenticate', {cookie: document.cookie});
 			// authenticate
 		} else {
 			self.set('authed', false);
@@ -113,7 +123,8 @@ Ember.Socket = Ember.Object.extend({
 
 		switch (event) {
 			case 'authenticate':
-				self.set('authed', data);
+				var authed = data.authenticated || false;
+				self.set('authed', authed);
 				break;
 			case 'burst':
 				Ember.$.get(data.url, function(data) {
@@ -124,6 +135,8 @@ Ember.Socket = Ember.Object.extend({
 							self._store(type, data[type], true);
 						}
 					}
+
+					self._loadComplete(true);
 				});
 				break;
 			case 'channelUsers':
@@ -144,7 +157,7 @@ Ember.Socket = Ember.Object.extend({
 				self._update('networks', data._id, data);
 				break;
 			case 'removeNetwork':
-				self._delete('networks', data);
+				self._delete('networks', data._id);
 				break;
 			case 'addTab':
 				self._store('tabs', [data]);
@@ -153,7 +166,7 @@ Ember.Socket = Ember.Object.extend({
 				self._update('tabs', data._id, data);
 				break;
 			case 'removeTab':
-				self._delete('tabs', data);
+				self._delete('tabs', data._id);
 				break;
 			case 'newEvent':
 				self._store('events', [data]);
@@ -165,7 +178,7 @@ Ember.Socket = Ember.Object.extend({
 				self._store('commands', [data]);
 				break;
 			case 'removeBacklog':
-				self._delete('commands', data);
+				self._delete('commands', data._id);
 				break;
 			case 'newChannelUser':
 				self._store('channelUsers', [data], false, userInsertCheck);
@@ -173,8 +186,8 @@ Ember.Socket = Ember.Object.extend({
 			case 'updateChannelUser':
 				self._update('channelUsers', data._id, data);
 				break;
-			case 'deleteChannelUser':
-				self._delete('channelUsers', data);
+			case 'removeChannelUser':
+				self._delete('channelUsers', data._id);
 				break;
 			case 'banList':
 				self.emitter.determineEvent('banList', 'new', data, false);

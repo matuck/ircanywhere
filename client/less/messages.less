@@ -21,6 +21,12 @@
 		margin: 8px auto;
 	}
 
+	hr[data-type=joined-channel] {
+		border: 0;
+		border-top: 4px double @hr-border;
+		margin: 5px;
+	}
+
 	.row:extend(.clear) {
 		margin: 0;
 		position: relative;
@@ -38,6 +44,17 @@
 			display: inline-block;
 		}
 
+		a[rel=nick-link],
+		a[rel=channel-link] {
+			display: inline-block;
+			background: aliceblue;
+			border-radius: 5px;
+			padding: 0 5px;
+			text-decoration: none;
+			font-weight: bold;
+			outline: none;
+		}
+
 		span {
 			line-height: 155%;
 
@@ -48,7 +65,7 @@
 			&.time {
 				padding: 4px 10px;
 				text-align: right;
-				width: 50px;
+				width: 65px;
 			}
 
 			&.message,
@@ -115,7 +132,7 @@
 			}
 
 			&[data-type=status] {
-				background: #eee;
+				background: @index-border;
 
 				.message {
 					font-family: "Courier New", Courier, monospace;
@@ -125,15 +142,15 @@
 			}
 
 			&[data-type=motd] {
-				background: #eee;
+				background: @index-border;
 				
 				.time {
 					padding-top: 11px;
 				}
 
 				.message {
-					background: #fff;
-					border: 1px solid #ddd;
+					background: @white;
+					border: 1px solid @disabled-input;
 					margin: 5px;
 					font-family: "Courier New", Courier, monospace;
 					font-size: 12px;

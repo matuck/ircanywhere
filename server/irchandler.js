@@ -8,6 +8,7 @@
  */
 
 var _ = require('lodash'),
+	queue = require('redmark'),
 	hooks = require('hooks'),
 	helper = require('../lib/helpers').Helpers;
 
@@ -22,7 +23,10 @@ var _ = require('lodash'),
  * @return void
  */
 function IRCHandler() {
-	
+	this.queueId = queue.seed(function(id, chan) {
+		ircFactory.send(id, 'raw', ['WHO', chan]);
+	}, {time: 1000, total: 10, max: 1000});
+	// rate limit /who call
 }
 
 /**
@@ -50,7 +54,29 @@ IRCHandler.prototype._formatRaw = function(raw) {
 	});
 
 	return output;
-}
+};
+
+/**
+ * Handles the connecting event from `irc-factory` 
+ *
+ * @method opened
+ * @param {Object} client A valid client object
+ * @param {Object} message A valid message object
+ * @return void
+ */
+IRCHandler.prototype.connecting = function(client, message) {
+	application.Networks.update({_id: client._id}, {$set: {
+		'internal.status': networkManager.flags.connecting
+	}}, {safe: false});
+
+	networkManager.activeTab(client, false);
+	// update tabs etc as connecting
+
+	if (message.localPort) {
+		IdentdCache[message.localPort] = message;
+	}
+	// have we got a local port yet?
+};
 
 /**
  * Handles the opened event from `irc-factory` which just tells us what localPort and any other
@@ -74,7 +100,7 @@ IRCHandler.prototype.opened = function(client, message) {
 
 	IdentdCache[message.localPort] = message;
 	delete client.forcedDisconnect;
-}
+};
 
 /**
  * Handles the registered event, this will only ever be called when an IRC connection has been
@@ -87,14 +113,12 @@ IRCHandler.prototype.opened = function(client, message) {
  * @return void
  */
 IRCHandler.prototype.registered = function(client, message) {
-	var channels = {};
-	
 	client.internal.capabilities = message.capabilities;
 	// set this immediately so the other stuff works
 
 	application.Networks.update({_id: client._id}, {$set: {
-		'nick': message.nickname,
-		'name': message.capabilities.network.name,
+		nick: message.nickname,
+		name: message.capabilities.network.name,
 		'internal.status': networkManager.flags.connected,
 		'internal.capabilities': message.capabilities
 	}}, {safe: false});
@@ -129,26 +153,14 @@ IRCHandler.prototype.registered = function(client, message) {
 		// XXX - send our connect commands, things that the user defines
 		// 		 nickserv identify or something
 
-		_.each(client.channels, function(channel, key) {
-			var chan = channel.channel,
-				password = channel.password || '';
-
-			ircFactory.send(client._id, 'join', [chan, password]);
-			ircFactory.send(client._id, 'mode', [chan]);
-			// request the mode aswell.. I thought this was sent out automatically anyway? Seems no.
+		_.each(client.channels, function(channel) {
+			if (channel.channel.trim() !== '') {
+				channelManager.queueJoin(client._id, channel.channel, channel.password || '');
+			}
 		});
 		// find our channels to automatically join from the network setup
-
-		setTimeout(function() {
-			application.Events.update({user: client.internal.userId, network: client.server}, {$set: {
-				network: message.capabilities.network.name,
-			}}, {multi: true, safe: false});
-		}, 5000);
-		// update events later on so when we're totally finished connecting (we can't assume at any point because of half assed ircds
-		// not sending out proper stuff.. we know that we're registered here we just give it 5 seconds for other shit to come in
-		// could be large who lists etc.
 	});
-}
+};
 
 /**
  * Handles a closed connection
@@ -175,7 +187,7 @@ IRCHandler.prototype.closed = function(client, message) {
 		ircFactory.destroy(client._id, false);
 	}
 	// destroy the client if we're not coming back
-}
+};
 
 /**
  * Handles a failed event, which is emitted when the retry attempts are exhaused
@@ -185,7 +197,7 @@ IRCHandler.prototype.closed = function(client, message) {
  * @param {Object} message A valid message object
  * @return void
  */
-IRCHandler.prototype.failed = function(client, message) {
+IRCHandler.prototype.failed = function(client) {
 	networkManager.changeStatus({_id: client._id}, networkManager.flags.failed);
 	// mark tab as failed
 	
@@ -199,7 +211,7 @@ IRCHandler.prototype.failed = function(client, message) {
 
 	ircFactory.destroy(client._id, false);
 	// destroy the client
-}
+};
 
 /**
  * Handles an incoming lusers event
@@ -215,7 +227,7 @@ IRCHandler.prototype.lusers = function(client, message) {
 		message: this._formatRaw(message.raw),
 		raw: message.raw
 	}, 'lusers');
-}
+};
 
 /**
  * Handles an incoming motd event
@@ -234,7 +246,7 @@ IRCHandler.prototype.motd = function(client, message) {
 	// again spin this back 15ms to prevent a rare but possible race condition where
 	// motd is the last thing that comes through, because we wait till we've recieved
 	// it all before sending it out, javascripts async nature causes this.
-}
+};
 
 /**
  * Handles an incoming join event
@@ -259,11 +271,15 @@ IRCHandler.prototype.join = function(client, message) {
 
 	if (message.nickname === client.nick) {
 		networkManager.addTab(client, message.channel, 'channel', true);
+		// add tab
+
 		ircFactory.send(client._id, 'mode', [message.channel]);
-		ircFactory.send(client._id, 'names', [message.channel]);
+		// request modes
+
 		insertEvent();
+		// insert join event
 	} else {
-		channelManager.insertUsers(client._id, client.name, message.channel, [user])
+		channelManager.insertUsers(client._id, message.channel, [user])
 			.then(insertEvent);
 	}
 	// if it's us joining a channel we'll create a tab for it and request a mode
@@ -271,7 +287,7 @@ IRCHandler.prototype.join = function(client, message) {
 	function insertEvent() {
 		eventManager.insertEvent(client, message, 'join');
 	}
-}
+};
 
 /**
  * Handles an incoming part event
@@ -287,14 +303,14 @@ IRCHandler.prototype.part = function(client, message) {
 	}
 
 	eventManager.insertEvent(client, message, 'part', function() {
-		channelManager.removeUsers(client.name, message.channel, [message.nickname]);
+		channelManager.removeUsers(client._id, message.channel, [message.nickname]);
 
 		if (message.nickname === client.nick) {
 			networkManager.activeTab(client, message.channel, false);
 		}
 		// we're leaving, mark the tab as inactive
 	});
-}
+};
 
 /**
  * Handles an incoming kick event
@@ -310,14 +326,14 @@ IRCHandler.prototype.kick = function(client, message) {
 	}
 
 	eventManager.insertEvent(client, message, 'kick', function() {
-		channelManager.removeUsers(client.name, message.channel, [message.kicked]);
+		channelManager.removeUsers(client._id, message.channel, [message.kicked]);
 
 		if (message.kicked === client.nick) {
 			networkManager.activeTab(client, message.channel, false);
 		}
 		// we're leaving, remove the tab
 	});
-}
+};
 
 /**
  * Handles an incoming quit event
@@ -333,9 +349,9 @@ IRCHandler.prototype.quit = function(client, message) {
 	}
 
 	eventManager.insertEvent(client, message, 'quit', function() {
-		channelManager.removeUsers(client.name, [message.nickname]);
+		channelManager.removeUsers(client._id, [message.nickname]);
 	});
-}
+};
 
 /**
  * Handles an incoming nick change event
@@ -350,21 +366,22 @@ IRCHandler.prototype.nick = function(client, message) {
 		return false;
 	}
 
-	if (message.nickname === client.nick) {
+	var mlower = message.nickname.toLowerCase();
+	if (mlower === client.nick.toLowerCase()) {
 		application.Networks.update({_id: client._id}, {$set: {nick: message.newnick}}, {safe: false});
 	}
 	// update the nickname because its us changing our nick
-
-	if (_.has(client.internal.tabs, message.nickname)) {
-		var mlower = message.nickname.toLowerCase();
+	
+	var mlower = message.nickname.toLowerCase();
+	if (_.has(client.internal.tabs, mlower)) {
 		application.Tabs.update({user: client.internal.userId, network: client._id, target: mlower}, {$set: {title: message.nickname, target: mlower, url: client.url + '/' + mlower}}, {safe: false});
 	}
 	// is this a client we're chatting to whos changed their nickname?
 	
 	eventManager.insertEvent(client, message, 'nick', function() {
-		channelManager.updateUsers(client._id, client.name, [message.nickname], {nickname: message.newnick});
+		channelManager.updateUsers(client._id, [message.nickname], {nickname: message.newnick});
 	});
-}
+};
 
 /**
  * Handles an incoming who event
@@ -409,12 +426,12 @@ IRCHandler.prototype.who = function(client, message) {
 		users.push(user);
 	});
 
-	channelManager.insertUsers(client._id, client.name, message.channel, users, true)
+	channelManager.insertUsers(client._id, message.channel, users, true)
 		.then(function(inserts) {
 			rpcHandler.push(client.internal.userId, 'channelUsers', inserts);
 			// burst emit these instead of letting the oplog tailer handle it, it's too heavy
 		});
-}
+};
 
 /**
  * Handles an incoming names event
@@ -425,18 +442,21 @@ IRCHandler.prototype.who = function(client, message) {
  * @return void
  */
 IRCHandler.prototype.names = function(client, message) {
+	var self = this;
+
 	if (!message.names || !message.channel) {
 		return false;
 	}
 
-	application.ChannelUsers.find({network: client.name, channel: message.channel.toLowerCase()}).toArray(function(err, channelUsers) {
+	application.ChannelUsers.find({network: client._id, channel: message.channel.toLowerCase()}).toArray(function(err, channelUsers) {
 		if (err || !channelUsers) {
 			return false;
 		}
 
 		var users = [],
 			keys = [],
-			regex = new RegExp('[' + helper.escape(client.internal.capabilities.modes.prefixes) + ']', 'g');
+			prefixes = helper.exists(client, 'internal.capabilities.modes.prefixes') || '@+',
+			regex = new RegExp('[' + helper.escape(prefixes) + ']', 'g');
 
 		channelUsers.forEach(function(u) {
 			keys.push(u.nickname);
@@ -451,11 +471,11 @@ IRCHandler.prototype.names = function(client, message) {
 		users.sort();
 
 		if (!_.isEqual(keys, users) && message.channel !== '*') {
-			ircFactory.send(client._id, 'raw', ['WHO', message.channel]);
+			queue.add(self.queueId, [client._id, message.channel]);
 		}
 		// different lists.. lets do a /WHO
 	});
-}
+};
 
 /**
  * Handles an incoming mode notify event
@@ -470,8 +490,8 @@ IRCHandler.prototype.mode = function(client, message) {
 		return false;
 	}
 
-	channelManager.updateModes(client._id, client.internal.capabilities.modes, client.name, message.channel, message.mode);
-}
+	channelManager.updateModes(client._id, client.internal.capabilities.modes, message.channel, message.mode);
+};
 
 /**
  * Handles an incoming mode change event
@@ -487,9 +507,9 @@ IRCHandler.prototype.mode_change = function(client, message) {
 	}
 
 	eventManager.insertEvent(client, message, 'mode', function() {
-		channelManager.updateModes(client._id, client.internal.capabilities.modes, client.name, message.channel, message.mode);
+		channelManager.updateModes(client._id, client.internal.capabilities.modes, message.channel, message.mode);
 	});
-}
+};
 
 /**
  * Handles an incoming topic notify event
@@ -514,7 +534,7 @@ IRCHandler.prototype.topic = function(client, message) {
 	eventManager.insertEvent(client, message, 'topic', function() {
 		channelManager.updateTopic(client._id, message.channel, message.topic, message.topicBy);
 	});
-}
+};
 
 /**
  * Handles an incoming topic change event
@@ -539,7 +559,7 @@ IRCHandler.prototype.topic_change = function(client, message) {
 	eventManager.insertEvent(client, message, 'topic_change', function() {
 		channelManager.updateTopic(client._id, message.channel, message.topic, message.topicBy);
 	});
-}
+};
 
 /**
  * Handles an incoming privmsg event
@@ -555,7 +575,7 @@ IRCHandler.prototype.privmsg = function(client, message) {
 	}
 
 	eventManager.insertEvent(client, message, 'privmsg');
-}
+};
 
 /**
  * Handles an incoming action event
@@ -571,7 +591,7 @@ IRCHandler.prototype.action = function(client, message) {
 	}
 
 	eventManager.insertEvent(client, message, 'action');
-}
+};
 
 /**
  * Handles an incoming notice event
@@ -587,7 +607,7 @@ IRCHandler.prototype.notice = function(client, message) {
 	}
 
 	eventManager.insertEvent(client, message, 'notice');
-}
+};
 
 /**
  * Handles an incoming usermode event
@@ -603,7 +623,7 @@ IRCHandler.prototype.usermode = function(client, message) {
 	}
 
 	eventManager.insertEvent(client, message, 'usermode');
-}
+};
 
 /**
  * Handles an incoming ctcp_response event
@@ -619,7 +639,7 @@ IRCHandler.prototype.ctcp_response = function(client, message) {
 	}
 
 	eventManager.insertEvent(client, message, 'ctcp_response');
-}
+};
 
 /**
  * Handles an incoming ctcp request event
@@ -640,7 +660,7 @@ IRCHandler.prototype.ctcp_request = function(client, message) {
 	}
 
 	eventManager.insertEvent(client, message, 'ctcp_request');
-}
+};
 
 /**
  * Handles an incoming unknown event
@@ -655,7 +675,7 @@ IRCHandler.prototype.unknown = function(client, message) {
 		message.message = message.params.join(' ');
 		eventManager.insertEvent(client, message, 'unknown');
 	}
-}
+};
 
 /**
  * Handles an incoming banlist event
@@ -671,7 +691,7 @@ IRCHandler.prototype.banlist = function(client, message) {
 	}
 
 	rpcHandler.push(client.internal.userId, 'banList', {channel: message.channel, items: message.banlist, type: 'banList'});
-}
+};
 
 /**
  * Handles an incoming invitelist event
@@ -687,7 +707,7 @@ IRCHandler.prototype.invitelist = function(client, message) {
 	}
 
 	rpcHandler.push(client.internal.userId, 'inviteList', {channel: message.channel, items: message.invitelist, type: 'inviteList'});
-}
+};
 
 /**
  * Handles an incoming exceptlist event
@@ -703,7 +723,7 @@ IRCHandler.prototype.exceptlist = function(client, message) {
 	}
 
 	rpcHandler.push(client.internal.userId, 'exceptList', {channel: message.channel, items: message.exceptlist, type: 'exceptList'});
-}
+};
 
 /**
  * Handles an incoming quietlist event
@@ -719,7 +739,7 @@ IRCHandler.prototype.quietlist = function(client, message) {
 	}
 
 	rpcHandler.push(client.internal.userId, 'quietList', {channel: message.channel, items: message.quietlist, type: 'quietList'});
-}
+};
 
 /**
  * Handles an incoming list event
@@ -738,7 +758,7 @@ IRCHandler.prototype.list = function(client, message) {
 	// mark list block as false now we have the response
 	
 	rpcHandler.push(client.internal.userId, 'list', {search: message.search, page: message.page, limit: message.limit, channels: message.list, network: client.name});
-}
+};
 
 /**
  * Handles an incoming whois event
@@ -755,7 +775,7 @@ IRCHandler.prototype.whois = function(client, message) {
 
 	message.network = client._id;
 	rpcHandler.push(client.internal.userId, 'whois', message);
-}
+};
 
 /* XXX - Events TODO
  	

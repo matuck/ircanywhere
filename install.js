@@ -188,13 +188,38 @@ function isMongoRunning(isGlobal, path) {
 			
 		db.command({replSetInitiate: null}, function(err, result) {
 			if (err === null || (result !== null && result.ok === 1)) {
-				doneInstalling(db, result);
+				waitForRsInitiated(db, result);
 			} else {
 				console.log(err, result);
 				console.log(COLOUR.red, 'rs.initiate() failed. Needs manual intervention.');
 				process.exit(1);
 			}
 		});
+	}
+
+	// waittime is in seconds
+	function waitForRsInitiated(db, originalResult, waittime=30) {
+		waittime = waittime * 2 // check every half-second, so double the count
+
+		process.stdout.write(COLOUR.blue, 'Checking if the replica set is fully initiated...');
+		while (waittime => 0) {
+			db.command({rs.status}, function(err, result) {
+				if (result.myState == 1) {
+					process.stdout.write(' Success!\n');
+					break;
+				} else if (waittime == 0) {
+					process.stdout.write('\n');
+					process.stdout.write(COLOUR.yellow, 'It appears that the mongodb replica set has not yet been initiated.');
+					process.stdout.write(COLOUR.yellow, 'MongoDB may magically correct this in seconds or minutes, but please be aware of this issue.');
+					break;
+				} else {
+					waittime = waittime - 1;
+					process.stdout.write('.');
+					time.sleep(0.5);
+				}
+			});
+		}
+		doneInstalling(db, originalResult);
 	}
 
 	function repairMongoDb(dbPath, logFile, path) {
@@ -389,7 +414,7 @@ function runGulp() {
 }
 
 function checkConfig() {
-	var configExists = fs.existsSync('./config.json');
+	var configExists = fs.existsSync('./config.js');
 
 	if (configExists) {
 		console.log(COLOUR.green, 'Found config file');
@@ -418,19 +443,19 @@ function checkConfig() {
 			}
 		}).on('close', function() {
 			if (install) {
-				cp.exec('cp config.example.json config.json', function(error, stdout, stderr) {
+				cp.exec('cp config.example.js config.js', function(error, stdout, stderr) {
 					if (stderr) {
 						throw stderr;
 					}
 
-					console.log(COLOUR.green, 'Default config created as config.json');
+					console.log(COLOUR.green, 'Default config created as config.js');
 					done();
 				});
 			} else {
 				done();
 			}
 		});
-		// prompt the user with a y/n to see if they want us to copy the example config json over.
+		// prompt the user with a y/n to see if they want us to copy the example config js over.
 	}
 }
 

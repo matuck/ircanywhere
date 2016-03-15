@@ -1,4 +1,4 @@
-{
+exports.config = {
 	"mongo": "mongodb://127.0.0.1:27017/ircanywhere",
 	/* -- required
 	 * -- string
@@ -36,6 +36,15 @@
 	 * -- usage: Whether to fork a seperate process for irc connections, this will allow connections to stay
 				 online when the main application closes. It'll also probably speed things up. It's recommended 
 				 to only ever set this to false when developing */
+
+	"retryWait": 10,
+	/* -- number
+	 * -- usage: How many seconds to wait between reconnect attemps, default is 10 */
+
+	"retryCount": 10,
+	/* -- number
+	 * -- usage: How many times to retry connecting if disconnected, default is 10. Set to negative to
+	 keep retrying and 0 to disable */
 
 	"ircServer": {
 		"enable": true,
@@ -77,11 +86,12 @@
 		 * -- usage: The email address to send emails from, can be either email@domain.tld
 					 or Name <email@domain.tld> */
 
-		"smtp": "smtp://username:password@smtp.gmail.com"
+		"smtp": "smtps://username:password@smtp.gmail.com"
 		/* -- required
 		 * -- string 
 		 * -- usage: The smtp server to connect to, it's advised you set this up properly, you can run
-		 			 a local server and pass in a local url, or get free accounts from places like Mailgun */
+		 			 a local server and pass in a local url, or get free accounts from places like Mailgun.
+		 			 Note the prefix smtps:// enables SSL, whereas smtp:// is unsecure. */
 	},
 
 	"clientSettings": {
@@ -96,7 +106,7 @@
 		 * -- usage: Network limit for users, minimum is 0, maximum is 10, at the moment */
 
 		"networkRestriction": [
-			"*.freenode.org"
+			"*.freenode.net"
 		],
 		/* -- array
 		 * -- usage: Whether to restrict clients to connecting to specific hostmasks, can be
@@ -110,7 +120,7 @@
 	},
 
 	"defaultNetwork": {
-		"server": "irc.freenode.org",
+		"server": "irc.freenode.net",
 		/* -- required
 		 * -- string 
 		 * -- usage: Hostname of the default network to connect new users to */
@@ -145,4 +155,4 @@
 		 * -- usage: An array of channels to connect to on startup, the channel must be the
 					 same as the above object, password is optional, channel is not. */
 	}
-}
+};

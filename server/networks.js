@@ -37,7 +37,7 @@ NetworkManager.prototype.flags = {
 	connecting: 'connecting',
 	closed: 'closed',
 	failed: 'failed'
-}
+};
 	
 /**
  * Called when the application is ready to proceed, this sets up event listeners
@@ -53,35 +53,38 @@ NetworkManager.prototype.init = function() {
 		networks = application.Networks.find(),
 		tabs = application.Tabs.find();
 
-	networks.each(function(err, doc) {
-		if (err || doc == null) {
+	networks.toArray(function(err, docs) {
+		if (err || !docs) {
 			return;
 		}
 		// error
 
-		var id = doc._id.toString();
-		if (!doc.internal) {
-			return;
-		}
+		_.each(docs, function(doc) {
+			var id = doc._id.toString();
+			if (!doc.internal) {
+				return;
+			}
 
-		Clients[id] = doc;
-		Clients[id].internal.tabs = {};
+			Clients[id] = doc;
+			Clients[id].internal.tabs = {};
+		});
+
+		tabs.each(function(err, doc) {
+			if (err || !doc) {
+				return;
+			}
+			// error
+
+			var client = Clients[doc.network.toString()];
+			if (!client || !client.internal) {
+				return;
+			}
+
+			Clients[doc.network.toString()].internal.tabs[doc.target] = doc;
+		});
+		
 	});
 	// load up networks and push them into Clients
-
-	tabs.each(function(err, doc) {
-		if (err || doc == null) {
-			return;
-		}
-		// error
-
-		var client = Clients[doc.network.toString()];
-		if (!client || !client.internal) {
-			return;
-		}
-
-		client.internal.tabs[doc.target] = doc;
-	});
 
 	application.ee.on(['networks', 'insert'], function(doc) {
 		var id = doc._id.toString();
@@ -96,16 +99,17 @@ NetworkManager.prototype.init = function() {
 
 	application.ee.on(['networks', 'update'], function(doc) {
 		var id = doc._id.toString();
-		
-		Clients[id] = doc;
-		Clients[id].internal.tabs = {};
-		
+
+		doc.internal.tabs = Clients[id].internal.tabs;
+		Clients[id] = _.extend(Clients[id], doc);
+
 		application.Tabs.find({user: doc.internal.userId, network: doc._id}).each(function(err, tab) {
-			if (err || tab == null) {
+			if (err || !tab) {
 				return;
 			}
 			// error
-			Clients[id].internal.tabs[tab.target] = tab;
+
+			Clients[id.toString()].internal.tabs[tab.target] = tab;
 		});
 	});
 
@@ -114,6 +118,10 @@ NetworkManager.prototype.init = function() {
 
 		ircFactory.destroy(id, false);
 		// destroy the client if it hasn't been destroyed
+
+		application.ChannelUsers.remove({network: id}, {safe: false});
+		application.Tabs.remove({network: id}, {safe: false});
+		// remove lingering data
 	});
 	// just sync clients up to this, instead of manually doing it
 	// we're asking for problems that way doing it this way means
@@ -144,7 +152,7 @@ NetworkManager.prototype.init = function() {
 			res.end(JSON.stringify(response));
 		});
 	});
-}
+};
 
 /**
  * Gets a list of networks, used by IRCFactory on synchronise
@@ -204,6 +212,7 @@ NetworkManager.prototype.getClients = function(keys) {
 				}
 			});
 
+			//application.Networks.update({_id: {$in: inactive}}, {$set: {'internal.status': self.flags.disconnected}}, {multi: true, safe: false});
 			application.Tabs.update({network: {$in: inactive}}, {$set: {active: false}}, {multi: true, safe: false});
 			// mark any tabs for x network inactive
 
@@ -213,10 +222,10 @@ NetworkManager.prototype.getClients = function(keys) {
 	});
 
 	return deferred.promise;
-}
+};
 
 /**
- * Gets a list of networks for a user.
+ * Gets a list of active networks for a user.
  *
  * @method getClientsForUSer
  * @param {String} userId Id of the user
@@ -225,14 +234,15 @@ NetworkManager.prototype.getClients = function(keys) {
 NetworkManager.prototype.getClientsForUser = function(userId) {
 	var deferred = Q.defer();
 
-	application.Networks.find({'internal.userId': userId}).toArray(function (err, networksArray) {
-		if (err) {
-			deferred.reject(err);
-			return;
-		}
+	application.Networks.find({'internal.userId': userId, 'internal.status': networkManager.flags.connected})
+		.toArray(function(err, networksArray) {
+			if (err) {
+				deferred.reject(err);
+				return;
+			}
 
-		deferred.resolve(networksArray);
-	});
+			deferred.resolve(networksArray);
+		});
 
 	return deferred.promise;
 };
@@ -248,7 +258,7 @@ NetworkManager.prototype.getClientsForUser = function(userId) {
 NetworkManager.prototype.getActiveChannelsForUser = function(userId, networkId) {
 	var deferred = Q.defer();
 
-	application.Tabs.find({user: userId, network: networkId, active: true, type: 'channel'}).toArray(function (err, tabsArray) {
+	application.Tabs.find({user: userId, network: networkId, active: true, type: 'channel'}).toArray(function(err, tabsArray) {
 		if (err) {
 			deferred.reject(err);
 			return;
@@ -267,10 +277,9 @@ NetworkManager.prototype.getActiveChannelsForUser = function(userId, networkId) 
  *
  * @method addNetworkApi
  * @param {Object} req A valid request object from express
- * @param {Object} res A valid response object from express
  * @return {Object} An output object for the API call
  */
-NetworkManager.prototype.addNetworkApi = function(req, res) {
+NetworkManager.prototype.addNetworkApi = function(req) {
 	var self = this,
 		deferred = Q.defer(),
 		server = req.param('server', ''),
@@ -287,7 +296,7 @@ NetworkManager.prototype.addNetworkApi = function(req, res) {
 	// get our parameters
 
 	userManager.isAuthenticated(req.headers.cookie)
-		.fail(function(err) {
+		.fail(function() {
 			output.failed = true;
 			output.errors.push({error: 'Not authenticated'});
 
@@ -295,8 +304,10 @@ NetworkManager.prototype.addNetworkApi = function(req, res) {
 		})
 		.then(function(user) {
 			restriction.forEach(function(item) {
-				var regex = helper.escape(item).replace(/\\\*/g, '(.*)');
-				escapedRestrictions.push(new RegExp('(' + regex + ')', 'i'));
+				if (item && item.trim() !== '') {
+					var regex = helper.escape(item).replace(/\\\*/g, '(.*)');
+					escapedRestrictions.push(new RegExp('(' + regex + ')', 'i'));
+				}
 			});
 			// create an array of restrictions
 
@@ -325,7 +336,7 @@ NetworkManager.prototype.addNetworkApi = function(req, res) {
 					output.errors.push({error: 'You have reached the maximum network limit of ' + application.config.clientSettings.networkLimit + ' and may not add anymore'});
 				}
 
-				var restricted = true;
+				var restricted = (restriction.length) ? true : false;
 				_.each(escapedRestrictions, function(item) {
 					if (item.test(server)) {
 						restricted = false;
@@ -333,7 +344,7 @@ NetworkManager.prototype.addNetworkApi = function(req, res) {
 				});
 
 				if (restricted) {
-					output.errors.push({error: 'There is a restriction inplace limiting your connections to ' + restriction});
+					output.errors.push({error: 'There is a restriction in place limiting your connections to ' + restriction});
 				}
 
 				if (output.errors.length > 0) {
@@ -371,7 +382,7 @@ NetworkManager.prototype.addNetworkApi = function(req, res) {
 		});
 
 	return deferred.promise;
-}
+};
 
 /**
  * Handles the edit network api call, everything the add network call does
@@ -380,10 +391,9 @@ NetworkManager.prototype.addNetworkApi = function(req, res) {
  *
  * @method editNetworkApi
  * @param {Object} req A valid request object from express
- * @param {Object} res A valid response object from express
  * @return {Object} An output object for the API call
  */
-NetworkManager.prototype.editNetworkApi = function(req, res) {
+NetworkManager.prototype.editNetworkApi = function(req) {
 	var self = this,
 		deferred = Q.defer(),
 		networkId = req.param('networkId', ''),
@@ -401,7 +411,7 @@ NetworkManager.prototype.editNetworkApi = function(req, res) {
 	// get our parameters
 
 	userManager.isAuthenticated(req.headers.cookie)
-		.fail(function(err) {
+		.fail(function() {
 			output.failed = true;
 			output.errors.push({error: 'Not authenticated'});
 
@@ -409,8 +419,10 @@ NetworkManager.prototype.editNetworkApi = function(req, res) {
 		})
 		.then(function(user) {
 			restriction.forEach(function(item) {
-				var regex = helper.escape(item).replace(/\\\*/g, '(.*)');
-				escapedRestrictions.push(new RegExp('(' + regex + ')', 'i'));
+				if (item && item.trim() !== '') {
+					var regex = helper.escape(item).replace(/\\\*/g, '(.*)');
+					escapedRestrictions.push(new RegExp('(' + regex + ')', 'i'));
+				}
 			});
 			// create an array of restrictions
 
@@ -444,7 +456,7 @@ NetworkManager.prototype.editNetworkApi = function(req, res) {
 					output.errors.push({error: 'The port you have entered is invalid'});
 				}
 
-				var restricted = true;
+				var restricted = (restriction.length) ? true : false;
 				_.each(escapedRestrictions, function(item) {
 					if (item.test(server)) {
 						restricted = false;
@@ -495,7 +507,7 @@ NetworkManager.prototype.editNetworkApi = function(req, res) {
 		});
 
 	return deferred.promise;
-}
+};
 
 /**
  * Adds a network using the settings specified to the user's set of networks
@@ -534,7 +546,7 @@ NetworkManager.prototype.addNetwork = function(user, network, status) {
 		nodeId: application.nodeId,
 		userId: user._id,
 		status: status
-	}
+	};
 	// this stores internal information about the network, it will be available to
 	// the client but they wont be able to edit it, it also wont be able to be enforced
 	// by the config settings or network settings, it's overwritten every time.
@@ -552,7 +564,7 @@ NetworkManager.prototype.addNetwork = function(user, network, status) {
 		}
 
 		application.Networks.insert(network, function(err, docs) {
-			if (err || docs.length == 0) {
+			if (err || docs.length === 0) {
 				deferred.reject();
 				return;
 			}
@@ -568,7 +580,7 @@ NetworkManager.prototype.addNetwork = function(user, network, status) {
 
 	return deferred.promise;
 	// insert the network. Just doing this will propogate the change directly due to our observe driver
-}
+};
 
 /**
  * Edits an existing network, updating the record in the database. We'll inform
@@ -580,8 +592,7 @@ NetworkManager.prototype.addNetwork = function(user, network, status) {
  * @return {promise} A promise to determine whether the insert worked or not
  */
 NetworkManager.prototype.editNetwork = function(user, network) {
-	var self = this,
-		deferred = Q.defer();
+	var deferred = Q.defer();
 
 	application.Networks.update({'_id': new mongo.ObjectID(network._id)}, _.omit(network, '_id'), {multi: false}, function(err) {
 		if (err) {
@@ -594,7 +605,7 @@ NetworkManager.prototype.editNetwork = function(user, network) {
 
 	return deferred.promise;
 	// update the network. Just doing this will propogate the change directly due to our observe driver
-}
+};
 
 /**
  * Adds a tab to the client's (network unique to user) tabs, this can be a
@@ -609,26 +620,28 @@ NetworkManager.prototype.editNetwork = function(user, network) {
  * @return void
  */
 NetworkManager.prototype.addTab = function(client, target, type, select, active) {
-	var select = (select !== undefined) ? select : false,
-		active = (active !== undefined) ? active : true,
-		obj = {
-			user: client.internal.userId,
-			url: (type === 'network') ? client.url : client.url + '/' + target.toLowerCase(),
-			network: client._id,
-			networkName: client.name,
-			target: target.toLowerCase().trim(),
-			title: target.trim(),
-			type: type,
-			active: active
-		};
+	var obj;
 
-	if (obj.target == '') {
+	select = (select !== undefined) ? select : false;
+	active = (active !== undefined) ? active : true;
+	obj = {
+		user: client.internal.userId,
+		url: (type === 'network') ? client.url : client.url + '/' + target.toLowerCase(),
+		network: client._id,
+		networkName: client.name,
+		target: target.toLowerCase().trim(),
+		title: target.trim(),
+		type: type,
+		active: active
+	};
+
+	if (obj.target === '') {
 		return false;
 	}
 	// empty, bolt it
 
-	var callback = function(err, doc) {
-		application.Tabs.update({user: client.internal.userId, network: client._id, target: obj.target}, {$set: obj}, {safe: false, upsert: true});
+	var callback = function() {
+		application.Tabs.update({user: client.internal.userId, network: client._id, target: obj.target, type: type}, {$set: obj}, {safe: false, upsert: true});
 		// insert to db, or update old record
 	};
 
@@ -638,7 +651,7 @@ NetworkManager.prototype.addTab = function(client, target, type, select, active)
 		callback(null, null);
 	}
 	// are they requesting a new selected tab?
-}
+};
 
 /**
  * Changes a tabs activity (not selection) - for example when you're kicked from a channel the tab
@@ -655,11 +668,14 @@ NetworkManager.prototype.addTab = function(client, target, type, select, active)
 NetworkManager.prototype.activeTab = function(client, target, activate) {
 	if (typeof target !== 'boolean') {
 		application.Tabs.update({user: client.internal.userId, network: client._id, target: target.toLowerCase()}, {$set: {active: activate}}, {safe: false});
+	
+		application.ChannelUsers.remove({network: client._id, channel: target.toLowerCase()}, {safe: false});
+		// remove any users for the tab
 	} else {
 		application.Tabs.update({user: client.internal.userId, network: client._id}, {$set: {active: target}}, {multi: true, safe: false});
 	}
 	// update the activation flag
-}
+};
 
 /**
  * Removes the specified tab, be careful because this doesn't re-select one, you're expected to look
@@ -677,12 +693,12 @@ NetworkManager.prototype.removeTab = function(client, target) {
 	if (target) {
 		application.Tabs.remove({user: client.internal.userId, network: client._id, target: target.toLowerCase()}, {safe: false});
 	} else {
-		application.Tabs.remove({user: client.internal.userId, network: client._id}, function(err, doc) {
+		application.Tabs.remove({user: client.internal.userId, network: client._id}, function() {
 			application.Networks.remove({_id: client._id}, {safe: false});
 		});
 	}
 	// remove tabs
-}
+};
 
 /**
  * Connect the specified network record, should only really be called when creating
@@ -701,8 +717,13 @@ NetworkManager.prototype.removeTab = function(client, target) {
  * @return void
  */
 NetworkManager.prototype.connectNetwork = function(network) {
-	ircFactory.create(network);
-}
+	ircFactory.create(_.extend(network,
+		{
+			retryCount: (application.config.retryCount !== null) ? application.config.retryCount : 10,
+			retryWait: application.config.retryWait * 1000 || 10000
+		}
+	));
+};
 
 /**
  * Update the status for a specific network specified by a MongoDB query. The reason for
@@ -723,7 +744,7 @@ NetworkManager.prototype.changeStatus = function(query, status) {
 	}
 
 	application.Networks.update(query, {$set: {'internal.status': status}}, {safe: false});
-}
+};
 
 NetworkManager.prototype = _.extend(NetworkManager.prototype, hooks);
 

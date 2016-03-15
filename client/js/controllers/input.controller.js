@@ -1,14 +1,29 @@
 App.InputController = Ember.ObjectController.extend({
-	needs: ['network', 'tab'],
+	needs: ['index', 'network', 'tab'],
 
+	notIteratingBacklog: true,
 	commandIndex: 0,
+	oldInputValue: '',
 	inputValue: '',
 	originalInputValue: '',
 	tabCompletionNicks: [],
 	tabCompletionIndex: 0,
 
+	backlog: [],
+
+	tabChanged: function () {
+		var self = this,
+			network = this.get('controllers.network.model._id'),
+			target = this.get('controllers.network.model.selectedTab.target');
+
+		this.get('socket').findButWait('commands', {network: network, target: target})
+			.then(function(items) {
+				self.set('backlog', items);
+			});
+	}.observes('controllers.index.tabId'),
+
 	ready: function() {
-		this.set('commandIndex', this.get('socket.commands').length);
+		this.set('commandIndex', this.get('backlog').length);
 	},
 
 	autoCompleteChar: function() {
@@ -32,7 +47,8 @@ App.InputController = Ember.ObjectController.extend({
 				commandObject = {
 					command: this.get('inputValue'),
 					network: tab.network,
-					target: tab.target
+					target: tab.target,
+					type: tab.type
 				};
 
 			if (command.substr(0, 1) === '/' && this.commands[command]) {
@@ -43,20 +59,26 @@ App.InputController = Ember.ObjectController.extend({
 			}
 
 			commandObject.timestamp = +new Date();
-			this.get('socket.commands').pushObject(commandObject);
+			this.get('backlog').pushObject(commandObject);
 			// we push it into the buffer manually, saves us getting the data sent back down
 			// through the pipe which is a waste of bandwidth
 
+			this.set('commandIndex', 0);
+			this.set('notIteratingBacklog', true);
+			this.set('oldInputValue', '');
 			this.set('inputValue', '');
 			// reset the input
 		},
 
 		tabComplete: function() {
 			var self = this,
-				input = (this.tabCompletionNicks.length === 0) ? this.get('inputValue').split(/\s+/) : this.get('originalInputValue').split(/\s+/),
+				el = Ember.$('.channel-input textarea').get(0),
+				selectionArea = this.get('inputValue').substr(0, el.selectionStart || this.get('inputValue').length),
+				unselectedArea = (el.selectionStart) ? this.get('inputValue').substr(el.selectionStart, this.get('inputValue').length) : '',
+				input = (this.tabCompletionNicks.length === 0) ? selectionArea.split(/\s+/) : this.get('originalInputValue').split(/\s+/),
 				lastWord = input[input.length - 1],
 				tab = this.get('socket.tabs').findBy('selected', true),
-				users = this.socket.find('channelUsers', {network: tab.networkName, channel: tab.target});
+				users = this.socket.find('channelUsers', {network: tab.network, channel: tab.target});
 
 			if (lastWord.trim() === '') {
 				return false;
@@ -90,35 +112,47 @@ App.InputController = Ember.ObjectController.extend({
 				this.set('inputValue', this.get('originalInputValue'));
 			} else {
 				input[input.length - 1] = (input.length === 1) ? currentNick + this.get('autoCompleteChar') + ' ' : currentNick;
-				this.set('inputValue', input.join(' '));
+				this.set('inputValue', input.join(' ') + ((unselectedArea !== '') ? ' ' + unselectedArea : ''));
 			}
 		},
 
 		toggleDown: function() {
 			var index = this.get('commandIndex') - 1,
-				command = this.get('socket.commands')[index];
+				command = this.get('backlog')[index];
+
+			if (this.get('notIteratingBacklog')) {
+				this.set('oldInputValue', this.get('inputValue'));
+			}
 
 			if (!command) {
-				this.set('inputValue', '');
-				this.set('commandIndex', this.get('socket.commands').length);
+				this.set('inputValue', this.get('oldInputValue'));
+				this.set('commandIndex', this.get('backlog').length);
+				this.set('notIteratingBacklog', true);
 			} else {
 				this.set('inputValue', command.command);
 				this.set('commandIndex', index);
+				this.set('notIteratingBacklog', false);
 			}
 			// set a new index and lastCommand
 		},
 
 		toggleUp: function() {
 			var index = this.get('commandIndex') + 1;
-				index = (index === (this.get('socket.commands').length + 1)) ? 0 : index;
-			var command = this.get('socket.commands').objectAt(index);
+				index = (index === (this.get('backlog').length + 1)) ? 0 : index;
+			var command = this.get('backlog').objectAt(index);
+
+			if (this.get('notIteratingBacklog')) {
+				this.set('oldInputValue', this.get('inputValue'));
+			}
 
 			if (!command) {
-				this.set('inputValue', '');
+				this.set('inputValue', this.get('oldInputValue'));
 				this.set('commandIndex', -1);
+				this.set('notIteratingBacklog', true);
 			} else {
 				this.set('inputValue', command.command);
 				this.set('commandIndex', index);
+				this.set('notIteratingBacklog', false);
 			}
 			// set a new index and lastCommand
 		}
@@ -127,10 +161,11 @@ App.InputController = Ember.ObjectController.extend({
 	commands: {
 		'/clear': function(tab) {
 			var socketEngine = this.get('socket');
-
-			socketEngine._deleteWhere('events', {network: tab.networkName, target: tab.target});
+			socketEngine._deleteWhere('events', {network: tab.network, target: tab.target});
 		}
-	}
+	},
+	
+	mergedProperties: ['commands'],
 });
 
 App.injectController('input');

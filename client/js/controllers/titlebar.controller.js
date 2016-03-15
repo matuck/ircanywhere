@@ -55,7 +55,8 @@ App.TitlebarController = Ember.ObjectController.extend({
 			this.socket.send('execCommand', {
 				command: (tab.active) ? '/leave' : '/join',
 				network: tab.network,
-				target: tab.target
+				target: tab.target,
+				type: tab.type
 			});
 		},
 
@@ -71,7 +72,8 @@ App.TitlebarController = Ember.ObjectController.extend({
 			this.socket.send('execCommand', {
 				command: (network.internal.status === 'disconnected' || network.internal.status === 'closed' || network.internal.status === 'failed') ? '/reconnect' : '/disconnect',
 				network: tab.network,
-				target: tab.target
+				target: tab.target,
+				type: tab.type
 			});
 		},
 
@@ -85,7 +87,8 @@ App.TitlebarController = Ember.ObjectController.extend({
 			this.socket.send('execCommand', {
 				command: '/close',
 				network: tab.network,
-				target: tab.target
+				target: tab.target,
+				type: tab.type
 			});
 		},
 
@@ -139,7 +142,7 @@ App.TitlebarController = Ember.ObjectController.extend({
 			this.set('tab', this._formatTab(tab));
 		}
 		// update this.tab if we have a new selected tab
-	}.observes('controllers.index.tabId', 'socket.tabs.@each.selected'),
+	}.observes('controllers.index.tabId'),
 
 	optionsChanged: function() {
 		var tab = this.get('socket.tabs').findBy('_id', this.get('controllers.index.tabId')),
@@ -178,7 +181,7 @@ App.TitlebarController = Ember.ObjectController.extend({
 			this.set('connectionLink', 'Disconnect');
 		}
 		// is the network connected?
-	}.observes('socket.tabs.@each.hiddenUsers', 'socket.tabs.@each.hiddenEvents', 'socket.tabs.@each.active', 'socket.networks.@each.internal.status', 'socket.tabs.@each.selected', 'controllers.index.tabId'),
+	}.observes('socket.tabs.@each.hiddenUsers', 'socket.tabs.@each.hiddenEvents', 'socket.tabs.@each.active', 'socket.networks.@each.internal.status', 'controllers.index.tabId'),
 
 	ready: function() {
 		this.tabChanged();

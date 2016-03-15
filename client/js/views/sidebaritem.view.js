@@ -47,12 +47,16 @@ App.SidebaritemView = Ember.View.extend({
 	url: function() {
 		var split = this.get('controller.content.url').split('/');
 
-		return (split.length == 1) ? '#/t/' + split[0] : '#/t/' + split[0] + '/' + Helpers.encodeChannel(split[1]);
+		return (split.length === 1) ? '#/t/' + split[0] : '#/t/' + split[0] + '/' + Helpers.encodeChannel(split[1]);
 	}.property('controller.content.url').cacheable(),
 
 	title: function() {
 		var active = this.get('controller.active'),
 			title = this.get('controller.title');
+
+		if (!title || title === '') {
+			title = this.get('controller.url');
+		}
 
 		return (!active) ? '(' + title + ')' : title;
 	}.property('controller.content.title', 'controller.content.active').cacheable()

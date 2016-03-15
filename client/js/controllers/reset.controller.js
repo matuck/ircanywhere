@@ -5,6 +5,12 @@ App.ResetController = Ember.ObjectController.extend({
 	password: '',
 	confirmPassword: '',
 
+	init: function () {
+		if (!this.socket.socket) {
+			this.socket._loadComplete(true);
+		}
+	},
+
 	actions: {
 		resetSubmit: function() {
 			var self = this;
@@ -19,7 +25,8 @@ App.ResetController = Ember.ObjectController.extend({
 
 	resetSuccess: function(data) {
 		this.set('errors', false);
-		this.set('success', data.successMessage);
+		this.get('controllers.login').set('success', data.successMessage);
+		this.transitionToRoute('login');
 	},
 
 	resetFail: function(data) {

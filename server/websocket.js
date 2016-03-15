@@ -38,7 +38,7 @@ util.inherits(WebSocket, events.EventEmitter);
 WebSocket.prototype.bindEvents = function() {
 	this._socket.on('data', this.onMessage.bind(this));
 	this._socket.on('close', this.onClose.bind(this));
-}
+};
 
 /**
  * Checks if an incoming message object is valid.
@@ -48,8 +48,8 @@ WebSocket.prototype.bindEvents = function() {
  * @return {Boolean} Whether the object is valid or not
  */
 WebSocket.prototype.isValid = function(parsed) {
-	return (parsed.event !== undefined || parsed.data !== undefined);
-}
+	return (typeof parsed.event === 'string' && typeof parsed.data === 'object');
+};
 
 /**
  * Handles an incoming message.
@@ -75,9 +75,11 @@ WebSocket.prototype.onMessage = function(raw) {
 		data = parsed.data;
 
 		this.emit(event, data);
+	} else {
+		this.send('authenticate', {authenticated: false}, true);
 	}
 	// is the event valid? try emitting
-}
+};
 
 /**
  * Handles closing the websocket connection.
@@ -98,7 +100,7 @@ WebSocket.prototype.onClose = function() {
 	
 	delete Sockets[this._socket.id];
 	// delete our references
-}
+};
 
 /**
  * Sends outgoing packets
@@ -110,7 +112,7 @@ WebSocket.prototype.onClose = function() {
  * @return void
  */
 WebSocket.prototype.send = function(event, data, close) {
-	var close = close || false;
+	close = close || false;
 
 	if (!this._socket) {
 		return false;
@@ -122,7 +124,7 @@ WebSocket.prototype.send = function(event, data, close) {
 	if (close) {
 		this._socket.close();
 	}
-}
+};
 
 /**
  * Compiles a temporary GET route and sends it to a socket
@@ -137,7 +139,7 @@ WebSocket.prototype.sendBurst = function(data) {
 
 	application.app.get(path, function(req, res) {
 		userManager.isAuthenticated(req.headers.cookie)
-			.fail(function(err) {
+			.fail(function() {
 				res.header('Content-Type', 'application/json');
 				res.end(JSON.stringify({'error': 'unauthenticated'}));
 			})
@@ -165,7 +167,7 @@ WebSocket.prototype.sendBurst = function(data) {
 		});
 	}, 10000);
 	// trash the route
-}
+};
 
 WebSocket.prototype = _.extend(WebSocket.prototype, hooks);
 

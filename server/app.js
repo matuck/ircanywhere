@@ -15,7 +15,6 @@ var _ = require('lodash'),
 	fs = require('fs'),
 	util = require('util'),
 	schema = require('./schema').schema,
-	jsonminify = require('jsonminify'),
 	validate = require('simple-schema'),
 	express = require('express'),
 	sockjs = require('sockjs'),
@@ -40,6 +39,7 @@ var _ = require('lodash'),
 function Application() {
 	var self = this;
 
+	this.exitProcess = false;
 	this.ee = new events.EventEmitter2({
 		wildcard: true,
 		delimiter: '.',
@@ -81,19 +81,20 @@ Application.prototype.init = function() {
 	this.setupWinston();
 	// setup winston first
 
-	if (!fs.existsSync('./config.json')) {
-		throw new Error('Configuration file config.json not found.');
+	try {
+		this.config = require('../config').config;
+		// A copy of the parsed config object
+	} catch (e) {
+		this.exitProcess = true;
+		throw new Error('Configuration file not found. If you have recently pulled from development branch, please amend your config.json and rename it to config.js.');
+		// Fail and exit if config file not found
 	}
 	// Fail and exit if config file not found
 
-	var rawConfig = fs.readFileSync('./config.json').toString();
-
-	this.config = JSON.parse(jsonminify(rawConfig));
-	// A copy of the parsed config object
-
 	var validation = validate(this.config, schema);
 	if (validation.length > 0) {
-		console.log(new Date().toJSON(), '-', util.inspect(validation, {colors: true}));
+		this.logger.log('error', util.inspect(validation, {colors: false}));
+		this.exitProcess = true;
 		throw new Error('Invalid config settings, please amend.');
 	}
 	// attempt to validate our config file
@@ -119,6 +120,7 @@ Application.prototype.init = function() {
 
 	mongo.MongoClient.connect(this.config.mongo, this.database.settings, function(err, db) {
 		if (err) {
+			this.exitProcess = true;
 			throw err;
 		}
 
@@ -131,8 +133,12 @@ Application.prototype.init = function() {
 		self.Events = db.collection('events');
 		self.Commands = db.collection('commands');
 
+		self.cleanCollections();
+		// ensure the collections are clean if < 0.1-beta
+
 		mongo.MongoClient.connect(self.config.oplog, self.database.settings, function(oerr, odb) {
 			if (oerr) {
+				this.exitProcess = true;
 				throw oerr;
 			}
 
@@ -156,6 +162,49 @@ Application.prototype.init = function() {
 };
 
 /**
+ * Clean `channelUsers` and `events` collection if needed. Usually when someone has installed
+ * 0.1-beta before installing this version and has incompatible data lingering around.
+ *
+ * @method cleanCollections
+ * @return void
+ */
+Application.prototype.cleanCollections = function() {
+	var self = this,
+		chanUserIds = [],
+		eventIds = [];
+
+	this.ChannelUsers.find({network: {$type: 2}}).toArray(function(err, docs) {
+		if (err) {
+			throw err;
+		}
+
+		_.each(docs, function(doc) {
+			chanUserIds.push(doc._id);
+		});
+		
+		if (chanUserIds.length) {
+			self.ChannelUsers.remove({_id: {$in: chanUserIds}}, {multi: true, safe: false});
+		}
+	});
+	// remove lingering channel user objects
+
+	this.Events.find({network: {$type: 2}}).toArray(function(err, docs) {
+		if (err) {
+			throw err;
+		}
+
+		_.each(docs, function(doc) {
+			eventIds.push(doc._id);
+		});
+		
+		if (eventIds.length) {
+			self.Events.remove({_id: {$in: eventIds}}, {multi: true, safe: false});
+		}
+	});
+	// same for events
+};
+
+/**
  * This method initiates the oplog tailing query which will look for any incoming changes on the database.
  * Incoming changes are then handled and sent to the global event emitter where other classes and modules
  * can listen to for inserts, updates and deletes to a collection to do what they wish with the changes.
@@ -169,16 +218,18 @@ Application.prototype.setupOplog = function() {
 
 	this.channelUserDocs = {};
 	this.ChannelUsers.find({}).each(function(err, item) {
-		if (err || !item) {
-			throw err;
+		if (!err && item) {
+			self.channelUserDocs[item._id] = item;
 		}
-
-		self.channelUserDocs[item._id] = item;
 	});
 
 	this.Oplog.find({ts: {$gte: new mongo.Timestamp(start, start)}}, {tailable: true, timeout: false}).each(function(err, item) {
 		if (err) {
 			throw err;
+		}
+		
+		if (!item) {
+			return;
 		}
 		
 		var collection = item.ns.split('.'),
@@ -290,6 +341,8 @@ Application.prototype.setupWinston = function() {
  * @return void
  */
 Application.prototype.handleError = function(err, exit) {
+	var self = this;
+
 	exit = (exit === undefined) ? true : exit;
 
 	if (!err) {
@@ -297,7 +350,7 @@ Application.prototype.handleError = function(err, exit) {
 	}
 
 	this.logger.log('error', err.stack, function() {
-		if (exit) {
+		if (exit || self.exitProcess) {
 			process.exit(0);
 		}
 	});
@@ -429,7 +482,8 @@ Application.prototype.setupServer = function() {
 	app.enable('trust proxy');
 	// express settings
 
-	var error = function(err, req, res) {
+	/*jshint unused:false */
+	var error = function(err, req, res, next) {
 		self.handleError(err, false);
 		res.send(500, 'An error has occured');
 	};

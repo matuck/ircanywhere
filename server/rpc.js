@@ -44,7 +44,7 @@ RPCHandler.prototype.init = function() {
 	application.ee.on(['commands', '*'], self.handleCommandsAll);
 	application.ee.on(['channelUsers', '*'], self.handleChannelUsersAll);
 	// handle changes to our collections individually this time
-}
+};
 
 /**
  * Pushes the data and command out to any sockets associated to that uid
@@ -67,9 +67,9 @@ RPCHandler.prototype.push = function(uid, command, data) {
 			if (s.socket) {
 				s.socket.send(command, data);
 			}
-		})
+		});
 	}
-}
+};
 
 /**
  * Handles any update changes to the users collection and sends changes to clients
@@ -88,7 +88,7 @@ RPCHandler.prototype.handleUsersUpdate = function(doc) {
 	// alter the document
 
 	rpcHandler.push(doc._id, 'updateUser', doc);
-}
+};
 
 /**
  * Handles any all changes to the network collection
@@ -109,9 +109,9 @@ RPCHandler.prototype.handleNetworksAll = function(doc) {
 	} else if (eventName === 'update') {
 		rpcHandler.push(doc.internal.userId, 'updateNetwork', doc);
 	} else if (eventName === 'delete') {
-		rpcHandler.push(doc.internal.userId, 'removeNetwork', doc);
+		rpcHandler.push(doc.internal.userId, 'removeNetwork', {_id: doc});
 	}
-}
+};
 
 /**
  * Handles all changes to the tabs collections
@@ -141,14 +141,18 @@ RPCHandler.prototype.handleTabsAll = function(doc) {
 		uid = doc.user;
 	}
 
+	if (!uid) {
+		return false;
+	}
+
 	if (eventName === 'insert') {
 		rpcHandler.push(uid, 'addTab', doc);
 	} else if (eventName === 'update') {
 		rpcHandler.push(uid, 'updateTab', doc);
 	} else if (eventName === 'delete') {
-		rpcHandler.push(uid, 'removeTab', doc);
+		rpcHandler.push(uid, 'removeTab', {_id: doc});
 	}
-}
+};
 
 /**
  * Handles any changes to the events collection
@@ -168,12 +172,16 @@ RPCHandler.prototype.handleEventsAll = function(doc) {
 	doc = _.omit(doc, 'user');
 	// alter the document
 
+	if (!uid) {
+		return false;
+	}
+
 	if (eventName === 'insert') {
 		rpcHandler.push(uid, 'newEvent', doc);
 	} else if (eventName === 'update') {
 		rpcHandler.push(uid, 'updateEvent', doc);
 	}
-}
+};
 
 /**
  * Handles all operations on the commands collection
@@ -192,9 +200,9 @@ RPCHandler.prototype.handleCommandsAll = function(doc) {
 	if (eventName === 'insert') {
 		rpcHandler.push(doc.user, 'newBacklog', doc);
 	} else if (eventName === 'delete') {
-		rpcHandler.push(doc.user, 'removeBacklog', doc);
+		rpcHandler.push(doc.user, 'removeBacklog', {_id: doc});
 	}
-}
+};
 
 
 /**
@@ -209,17 +217,19 @@ RPCHandler.prototype.handleChannelUsersAll = function(doc, ext) {
 		return false;
 	}
 
-	var query = (ext) ? {'networkName': ext.network, 'target': ext.channel} : {'networkName': doc.network, 'target': doc.channel},
+	var query = (ext) ? {'network': ext.network, 'target': ext.channel} : {'network': doc.network, 'target': doc.channel},
 		eventName = this.event[1],
 		uid = false;
 
 	doc = _.omit(doc, 'username', 'hostname', '_burst');
 	// alter the document
 
-	_.each(Clients, function(value, key) {
+	_.each(Clients, function(value) {
 		var tab = _.find(value.internal.tabs, query);
 		if (tab) {
 			uid = tab.user;
+		} else {
+			return;
 		}
 		// find the tab that this change is for
 
@@ -228,10 +238,10 @@ RPCHandler.prototype.handleChannelUsersAll = function(doc, ext) {
 		} else if (eventName === 'update') {
 			rpcHandler.push(uid, 'updateChannelUser', doc);
 		} else if (eventName === 'delete') {
-			rpcHandler.push(uid, 'deleteChannelUser', doc);
+			rpcHandler.push(uid, 'removeChannelUser', {_id: doc});
 		}
 	});
-}
+};
 
 /**
  * Handles a new websocket opening and attaches the RPC events
@@ -285,7 +295,7 @@ RPCHandler.prototype.onSocketOpen = function(socket) {
 	});
 
 	Sockets[socket.id] = webSocket;
-}
+};
 
 /**
  * Handles the authentication command sent to us from websocket clients
@@ -298,11 +308,12 @@ RPCHandler.prototype.onSocketOpen = function(socket) {
  * @return void
  */
 RPCHandler.prototype.handleAuth = function(socket, data) {
-	var self = this;
+	var self = this,
+		cookie = data.cookie || '';
 	
-	userManager.isAuthenticated(data)
-		.fail(function(err) {
-			socket.send('authenticate', false, true);
+	userManager.isAuthenticated(cookie)
+		.fail(function() {
+			socket.send('authenticate', {authenticated: false}, true);
 		})
 		.then(function(user) {
 			socket._user = user;
@@ -313,12 +324,12 @@ RPCHandler.prototype.handleAuth = function(socket, data) {
 				Users[user._id].push({id: socket.id, socket: socket});
 			}
 
-			socket.send('authenticate', true, false);
+			socket.send('authenticate', {authenticated: true}, false);
 
 			self.handleConnect(socket);
 			// handle sending out data on connect
 		});
-}
+};
 
 /**
  * Handles new websocket clients, this is only done after
@@ -361,7 +372,7 @@ RPCHandler.prototype.handleConnect = function(socket) {
 	// get our networks
 
 	deferred.promise
-		.fail(function(err) {
+		.fail(function() {
 			socket.sendBurst(output);
 		})
 		.then(function(nets) {
@@ -403,16 +414,16 @@ RPCHandler.prototype.handleConnect = function(socket) {
 				var tlower = tab.target.toLowerCase(),
 					query;
 
-				usersQuery.$or.push({network: netIds[tab.network].name, channel: tlower});
+				usersQuery.$or.push({network: tab.network, channel: tlower});
 				commandsQuery.$or.push({network: tab.network, target: tlower});
 				// construct some queries
 
 				if (tab.type === 'query') {
-					query = {network: netIds[tab.network].name, user: user._id, $or: [{target: tlower}, {'message.nickname': new RegExp('(' + helper.escape(tlower) + ')', 'i'), target: netIds[tab.network].nick.toLowerCase()}]};
+					query = {network: tab.network, user: user._id, $or: [{target: tlower}, {'message.nickname': new RegExp('(' + helper.escape(tlower) + ')', 'i'), target: netIds[tab.network].nick.toLowerCase()}]};
 				} else if (tab.type === 'network') {
-					query = {network: netIds[tab.network].name, target: '*', user: user._id}
+					query = {network: tab.network, target: '*', user: user._id};
 				} else {
-					query = {network: netIds[tab.network].name, target: tlower, user: user._id}
+					query = {network: tab.network, target: tlower, user: user._id};
 				}
 
 				application.Events.find(query, ['_id', 'extra', 'message', 'network', 'read', 'target', 'type']).sort({'message.time': -1}).limit(50).toArray(function(err, dbEventResults) {
@@ -457,7 +468,7 @@ RPCHandler.prototype.handleConnect = function(socket) {
 		application.Users.update({_id: user._id}, {$set: {lastSeen: new Date(), selectedTab: user.selectedTab}}, {safe: false});
 		// update last seen time
 	}
-}
+};
 
 /**
  * Handles the exec command RPC call. Which should be used to execute /commands
@@ -470,19 +481,21 @@ RPCHandler.prototype.handleConnect = function(socket) {
  * @return void
  */
 RPCHandler.prototype.handleCommand = function(socket, data, exec) {
-	var exec = exec || false,
-		allow = false,
-		allowed = ['command', 'network', 'target'],
-		command = (exec) ? 'execCommand' : 'sendCommand',
-		user = socket._user,
-		data = data.object;
+	var allow = false,
+		allowed = ['command', 'network', 'target', 'type'],
+		command,
+		user = socket._user;
 
-	if (!data) {
+	exec = exec || false;
+	command = (exec) ? 'execCommand' : 'sendCommand';
+	data = data.object;
+
+	if (!data || !user) {
 		return socket.send('error', {command: command, error: 'invalid format, see API docs'});
 	}
 
 	_.forOwn(data, function(value, item) {
-		if ((item === 'command' || item === 'network' || item === 'target') && typeof value === 'string') {
+		if ((item === 'command' || item === 'network' || item === 'target' || item === 'type') && typeof value === 'string') {
 			allow = true;
 		}
 
@@ -496,7 +509,7 @@ RPCHandler.prototype.handleCommand = function(socket, data, exec) {
 		return socket.send('error', {command: command, error: 'invalid document properties, see API docs'});
 	}
 
-	application.Tabs.findOne({network: new mongo.ObjectID(data.network), user: user._id, target: data.target}, function(err, find) {
+	application.Tabs.findOne({network: new mongo.ObjectID(data.network), user: user._id, target: data.target, type: data.type}, function(err, find) {
 		if (err || !find) {
 			return socket.send('error', {command: command, error: 'not authorised to call this command'});
 		}
@@ -504,6 +517,7 @@ RPCHandler.prototype.handleCommand = function(socket, data, exec) {
 		data.user = user._id;
 		data.timestamp = +new Date();
 		data.network = find.network;
+		data.type = data.type;
 		data.backlog = !exec;
 		// bail if we can't find the tab, if we can re-set the network value
 
@@ -511,7 +525,7 @@ RPCHandler.prototype.handleCommand = function(socket, data, exec) {
 		// insert
 	});
 	// try and find a valid tab
-}
+};
 
 /**
  * Handles the command which marks events as read. It takes a MongoDB query and updates
@@ -523,15 +537,14 @@ RPCHandler.prototype.handleCommand = function(socket, data, exec) {
  * @return void
  */
 RPCHandler.prototype.handleReadEvents = function(socket, data) {
-	var user = socket._user,
-		query = data.query,
+	var query = data.query,
 		object = data.object;
 
 	if (!query || !object) {
 		return socket.send('error', {command: 'readEvents', error: 'invalid format, see API docs'});
 	}
 
-	if (!_.difference(_.keys(object), ['read']).length === 0 && typeof object.read === 'boolean') {
+	if (_.difference(_.keys(object), ['read']).length !== 0 && typeof object.read === 'boolean') {
 		return socket.send('error', {command: 'readEvents', error: 'invalid document properties, see API docs'});
 	}
 
@@ -559,9 +572,13 @@ RPCHandler.prototype.handleReadEvents = function(socket, data) {
 		});
 	}
 	// convert _id to proper mongo IDs
+
+	if (query.network) {
+		query.network = new mongo.ObjectID(query.network);
+	}
 	
 	application.Events.update(query, {$set: object}, {multi: true, safe: false});
-}
+};
 
 /**
  * Handles the selectTab command which is used to change the currently active tab
@@ -574,14 +591,14 @@ RPCHandler.prototype.handleReadEvents = function(socket, data) {
  */
 RPCHandler.prototype.handleSelectTab = function(socket, data) {
 	var user = socket._user,
-		exists = false;
+		exists = false,
 		url = data.object;
 
-	if (!url) {
+	if (!url || !user) {
 		return socket.send('error', {command: 'selectTab', error: 'invalid format, see API docs'});
 	}
 
-	_.each(Clients, function(value, key) {
+	_.each(Clients, function(value) {
 		if (value.internal.userId.toString() !== user._id.toString()) {
 			return;
 		}
@@ -597,7 +614,7 @@ RPCHandler.prototype.handleSelectTab = function(socket, data) {
 	}
 
 	application.Users.update({_id: user._id}, {$set: {selectedTab: url}}, {safe: false});
-}
+};
 
 /**
  * Handles the update tab command, we're allowed to change client side only settings here
@@ -612,10 +629,11 @@ RPCHandler.prototype.handleUpdateTab = function(socket, data) {
 	var user = socket._user,
 		allow = false,
 		allowed = ['hiddenUsers', 'hiddenEvents'],
-		tab = data.query,
-		data = data.object;
+		tab = data.query;
 
-	if (!tab || !data) {
+	data = data.object;
+
+	if (!tab || !data || !user) {
 		return socket.send('error', {command: 'updateTab', error: 'invalid format, see API docs'});
 	}
 
@@ -640,7 +658,7 @@ RPCHandler.prototype.handleUpdateTab = function(socket, data) {
 
 	application.Tabs.update({_id: tab, user: user._id}, {$set: data}, {safe: false});
 	// update
-}
+};
 
 /**
  * Allows users to create new tabs on the fly from the client side. Restricted to ``channel`` and ``query`` tabs.
@@ -653,10 +671,11 @@ RPCHandler.prototype.handleUpdateTab = function(socket, data) {
 RPCHandler.prototype.handleInsertTab = function(socket, data) {
 	var user = socket._user,
 		allow = false,
-		allowed = ['target', 'network', 'selected'],
-		data = data.object;
+		allowed = ['target', 'network', 'selected'];
 
-	if (!data) {
+	data = data.object;
+
+	if (!data || !user) {
 		return socket.send('error', {command: 'insertTab', error: 'invalid format, see API docs'});
 	}
 
@@ -694,7 +713,7 @@ RPCHandler.prototype.handleInsertTab = function(socket, data) {
 		}
 	}
 	// we're allowed to continue, use network manager to add the tab
-}
+};
 
 /**
  * Handles queries to the events collection
@@ -709,7 +728,7 @@ RPCHandler.prototype.handleGetEvents = function(socket, data) {
 		query = data.query,
 		limit = data.object || 50;
 
-	if (!query) {
+	if (!query || !user) {
 		return socket.send('error', {command: 'getEvents', error: 'invalid format, see API docs'});
 	}
 
@@ -720,12 +739,17 @@ RPCHandler.prototype.handleGetEvents = function(socket, data) {
 
 	if (query._id) {
 		_.each(query._id, function(_id, op) {
-			var _id = query._id[op];
+			_id = query._id[op];
 			
 			if (_id) {
 				query._id[op] = new mongo.ObjectID(_id);
 			}
 		});
+	}
+	// convert _id to proper mongo IDs
+	
+	if (query.network) {
+		query.network = new mongo.ObjectID(query.network);
 	}
 	// convert _id to proper mongo IDs
 
@@ -735,11 +759,9 @@ RPCHandler.prototype.handleGetEvents = function(socket, data) {
 		} else {
 			socket.send('events', response);
 		}
-
-
 	});
 	// perform the query 
-}
+};
 
 RPCHandler.prototype = _.extend(RPCHandler.prototype, hooks);
 

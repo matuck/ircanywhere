@@ -1,6 +1,6 @@
 App.InputView = Ember.View.extend({
 	templateName: 'input',
-	tagName: 'table',
+	tagName: 'div',
 	classNames: 'channel-input',
 
 	didInsertElement: function() {
@@ -10,16 +10,21 @@ App.InputView = Ember.View.extend({
 		// difficult to do this without doing so
 		
 		this.$('textarea').on('keydown', this.onKeyDown.bind(this));
+		this.$('textarea').on('cut paste drop', this.resize.bind(this));
 	},
 
 	willDestroyElement: function() {
 		Ember.$(document).off('keydown', this.documentKeyDown.bind(this));
+
 		this.$('textarea').off('keydown', this.onKeyDown.bind(this));
+		this.$('textarea').off('cut paste drop', this.resize.bind(this));
 	},
 
-	documentKeyDown: function() {
-		if (!Ember.$('input, textarea').is(':focus')) {
-			this.$('textarea').focus();
+	documentKeyDown: function(e) {
+		var textarea = this.$('textarea');
+
+		if (!e.metaKey && !e.ctrlKey && textarea && !Ember.$('input, textarea').is(':focus')) {
+			textarea.focus();
 		}
 	},
 
@@ -47,5 +52,18 @@ App.InputView = Ember.View.extend({
 		} else {
 			this.get('controller').send('resetTabCompletion');
 		}
+		
+		Ember.run.later(this, this.resize, 0);
+		// Resize after changing textarea content
+	},
+
+	resize: function() {
+		var textarea = this.$('textarea'),
+			element = Ember.$(this.get('element')),
+			padding = parseInt(textarea.css('paddingTop'), 10) + parseInt(textarea.css('paddingBottom'), 10);
+
+		textarea.height('auto');
+		textarea.height(textarea.prop('scrollHeight') - padding);
+		element.height(textarea.prop('scrollHeight') + (padding * 2));
 	}
 });

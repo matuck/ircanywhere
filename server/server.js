@@ -9,7 +9,8 @@
 
 var net = require('net'),
 	hooks = require('hooks'),
-	ServerSession = require('./serverSession').ServerSession;
+	_ = require('lodash'),
+	ServerSession = require('./serversession').ServerSession;
 
 /**
  * This is the IRC server that manages IRC client connections to ircanywhere. The IRC server
@@ -19,7 +20,8 @@ var net = require('net'),
  * port it runs on. The default port is 6667.
  *
  * @class IRCServer
- * @constructor IRCServer
+ * @method IRCServer
+ * @return void
  */
 function IRCServer() {
 	var self = this;
@@ -33,7 +35,8 @@ function IRCServer() {
 /**
  * Setup server and start listening for connections.
  *
- * @returns void
+ * @method init
+ * @return void
  */
 IRCServer.prototype.init = function() {
 	if (!application.config.ircServer.enable) {
@@ -71,10 +74,14 @@ IRCServer.prototype.init = function() {
 /**
  * Handles new server connection. Starts a session.
  *
+ * @method onConnect
  * @param {Object} socket Connection socket to the client
+ * @return void
  */
 IRCServer.prototype.onConnect = function(socket) {
 	new ServerSession(socket);
 };
+
+IRCServer.prototype = _.extend(IRCServer.prototype, hooks);
 
 exports.IRCServer = IRCServer;

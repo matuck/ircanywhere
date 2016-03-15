@@ -1,17 +1,13 @@
+Ember.Handlebars.helper('json', function(value) {
+	console.log(JSON.stringify(value, undefined, 2));
+});
+
 Ember.Handlebars.helper('safeString', function(value) {
 	return new Ember.Handlebars.SafeString(value);
 });
 
-Ember.Handlebars.helper('lookup', function(component, context, options) {
-	if (Ember.TEMPLATES[component]) {
-		Ember.TEMPLATES[component](this, options);
-	} else if (component !== false) {
-		console.warn('Got event, but template for:', component, 'does not exist');
-	}
-});
-
 Ember.Handlebars.helper('time', function(context) {
-	return new Date(context).format('g:i A');
+	return new Date(context).toLocaleTimeString();
 });
 
 Ember.Handlebars.registerBoundHelper('ircParse', function(text, networkId) {
@@ -37,12 +33,23 @@ Ember.Handlebars.registerHelper('group', function(options) {
 	view.appendChild(childView);
 });
 
-Ember.Handlebars.helper('userLink', function(show, user) {
+Ember.Handlebars.helper('motd', function(messages) {
+	var str = '',
+		network = this.get('parentController.parentController.content');
+
+	messages.forEach(function(text) {
+		str += App.Parser.exec(text, network) + '<br />';
+	});
+
+	return new Ember.Handlebars.SafeString(str);
+});
+
+function generateUserLink(show, user) {
 	var context = (user) ? user : this.get('content'),
 		prefix = (!context.extra) ? context.prefix : context.extra.prefix,
 		nickname = context.nickname || context.message.nickname,
 		prefixClass = '',
-		url = this.get('controllers.network.model').url;
+		url = this.get('controllers.network.model.url');
 
 	if (!nickname) {
 		return '';
@@ -66,4 +73,6 @@ Ember.Handlebars.helper('userLink', function(show, user) {
 	
 	return new Ember.Handlebars.SafeString(html);
 	// return the element
-});
+};
+
+Ember.Handlebars.helper('userLink', generateUserLink);

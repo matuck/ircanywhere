@@ -79,6 +79,7 @@ body {
 		&[rel=user-link] {
 			white-space: nowrap;
 			display: inline;
+			outline: none;
 
 			&:hover {
 				text-decoration: none;
@@ -560,6 +561,8 @@ body {
 }
 
 .body, .modal-body {
+	width: 100%;
+	
 	.left {
 		float: left;
 		width: 48%;
@@ -643,7 +646,7 @@ a[rel=twipsy] {
 		height: 0;
 		border-style: solid;
 		border-width: 5px 6px 5px 0;
-		border-color: transparent #000333 transparent transparent;
+		border-color: transparent #333 transparent transparent;
 		position: absolute;
 		left: 15px;
 		bottom: 2px;
@@ -652,7 +655,7 @@ a[rel=twipsy] {
 	&:hover:after {
 		background: #333;
 		bottom: -4px;
-		color: #fff;
+		color: @white;
 		content: attr(title);
 		left: 21px;
 		padding: 6px;
@@ -661,6 +664,7 @@ a[rel=twipsy] {
 		width: 150px;
 		font-weight: 400;
 		font-size: 11px;
+		line-height: 13px;
 	}
 }
 

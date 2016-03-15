@@ -1,9 +1,16 @@
 App.IndexController = Ember.ObjectController.extend(App.Visibility, {
-	needs: ['infolist'],
+	needs: ['infolist', 'network'],
 	tabId: null,
+	isActive: true,
+	history: [],
 
 	init: function() {
+		if (!this.socket.socket || !this.socket.authed) {
+			this.socket._loadComplete(true);
+		}
+
 		this.bindVisibility();
+		this.setupHistory();
 	},
 
 	tabChanged: function() {
@@ -20,10 +27,15 @@ App.IndexController = Ember.ObjectController.extend(App.Visibility, {
 			}
 			// move the route to the selected tab
 
+			tab.set('requestedBacklog', false);
+			tab.set('messageLimit', 50);
+
+			this.get('socket.users').setEach('selectedTab', tab.url);
 			this.set('tabId', tab.get('_id'));
-			// change the tab id
+			this.get('controllers.network').onUnreadChange();
+			// change the tab information
 		}
-	}.observes('socket.users.@each.selectedTab', 'socket.tabs.length'),
+	}.observes('socket.users.@each.selectedTab'),
 	
 	determinePath: function() {
 		if (this.socket.authed === null && !this.socket.socket) {
@@ -45,6 +57,15 @@ App.IndexController = Ember.ObjectController.extend(App.Visibility, {
 			this.transitionToRoute('login');
 		}
 	}.observes('socket.authed'),
+
+	setupHistory: function() {
+		var self = this;
+
+		self.history.push(document.location.href);
+		window.onpopstate = function() {
+			self.history.push(document.location.href);
+		};
+	},
 
 	ready: function() {
 		this.tabChanged();

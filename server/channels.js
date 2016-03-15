@@ -9,7 +9,8 @@
 
 var _ = require('lodash'),
 	hooks = require('hooks'),
-	Q = require('q');
+	Q = require('q'),
+	helper = require('../lib/helpers').Helpers;
 
 /**
  * This object is responsible for managing everything related to channel records, such as
@@ -28,7 +29,88 @@ function ChannelManager() {
 		modes: ''
 	};
 	// a default channel object
+
+	this.queues = {};
+	// queue object
 }
+
+/**
+ * Queues a channel for join
+ *
+ * @method queueJoin
+ * @param {ObjectID} id A valid Mongo ObjectID for the networks collection
+ * @param {String} channel A valid channel name
+ * @param {String} key A key to join the channel if necessary
+ * @return void
+ */
+ChannelManager.prototype.queueJoin = function(id, channel, key) {
+	var self = this;
+
+	if (!this.queues[id]) {
+		this.queues[id] = [];
+	}
+	// is there a queue for this user?
+
+	var queue = this.queues[id];
+	if (queue.length) {
+		var item = queue[queue.length - 1];
+		clearTimeout(item.timeoutId);
+		delete item.timeoutId;
+	}
+	// get last item
+
+	var timeout = setTimeout(function() {
+		commitJoin(id);
+	}, 50);
+
+	queue.push({id: id, channel: channel, key: key || '0', timeoutId: timeout});
+	// push to the queue
+
+	function commitJoin(i) {
+		var message = '',
+			remove = [];
+
+		_.each(self.queues[i], function(item) {
+			if (!item) {
+				return;
+			}
+			
+			if (message === '') {
+				message = item.channel + ' ' + item.key;
+			} else {
+				var parts = message.split(' '),
+					channels = parts[0].split(','),
+					keys = parts[1].split(',');
+
+				channels.push(item.channel);
+				keys.push(item.key);
+				message = channels.join(',') + ' ' + keys.join(',');
+			}
+
+			remove.push(item.channel);
+			
+			if (message.length >= 503) {
+				return false;
+			}
+		});
+		// construct a string that IRC understands from our channel objects
+
+		if (remove.length) {
+			self.queues[i] = _.filter(self.queues[i], function(obj) {
+				return (_.indexOf(remove, obj.channel) === -1);
+			});
+
+			ircFactory.send(id, 'raw', 'JOIN ' + message);
+			// send the join
+
+			if (self.queues[i].length > 0) {
+				commitJoin(i);
+			} else {
+				delete self.queues[i];
+			}
+		}
+	}
+};
 
 /**
  * Gets a tab record from the parameters passed in, strictly speaking this doesn't have to
@@ -67,13 +149,12 @@ ChannelManager.prototype.getChannel = function(network, channel) {
  * 
  * @method insertUsers
  * @param {ObjectID} key A valid Mongo ObjectID for the networks collection
- * @param {String} network The network name, such as 'freenode'
  * @param {String} channel The channel name '#ircanywhere'
  * @param {[Object]} users An array of valid user objects usually from a who/join output
  * @param {Boolean} [force] Optional boolean whether to overwrite the contents of the channelUsers
  * @return {promise} A promise containing final array of the users inserted
  */
-ChannelManager.prototype.insertUsers = function(key, network, channel, users, force) {
+ChannelManager.prototype.insertUsers = function(key, channel, users, force) {
 	var deferred = Q.defer(),
 		burst = (users.length > 1),
 		find = [],
@@ -109,7 +190,7 @@ ChannelManager.prototype.insertUsers = function(key, network, channel, users, fo
 	this.getChannel(key, channel)
 		.then(function() {
 			_.each(users, function(u) {
-				u.network = network;
+				u.network = key;
 				u.channel = channel;
 				u._burst = burst;
 				find.push(u.nickname);
@@ -122,9 +203,9 @@ ChannelManager.prototype.insertUsers = function(key, network, channel, users, fo
 			// turn this into an array of nicknames
 
 			if (force) {
-				application.ChannelUsers.remove({network: network, channel: channel}, insertUsers);
+				application.ChannelUsers.remove({network: key, channel: channel}, insertUsers);
 			} else {
-				application.ChannelUsers.remove({network: network, channel: channel, nickname: {$in: find}}, insertUsers);
+				application.ChannelUsers.remove({network: key, channel: channel, nickname: {$in: find}}, insertUsers);
 			}
 			// ok so here we've gotta remove any users in the channel already
 			// and all of them if we're being told to force the update
@@ -138,12 +219,12 @@ ChannelManager.prototype.insertUsers = function(key, network, channel, users, fo
  * and that nickname will be removed from all channels records on that network.
  * 
  * @method removeUsers
- * @param {String} network A valid network name
+ * @param {ObjectID} key A valid Mongo ObjectID for the networks collection
  * @param {String} [channel] A valid channel name
  * @param {Array} users An array of users to remove from the network `or` channel
  * @return void
  */
-ChannelManager.prototype.removeUsers = function(network, channel, users) {
+ChannelManager.prototype.removeUsers = function(key, channel, users) {
 	channel = (_.isArray(channel)) ? channel : channel.toLowerCase();
 	users = (_.isArray(channel)) ? channel : users;
 	// basically we check if channel is an array, if it is we're being told to
@@ -154,9 +235,9 @@ ChannelManager.prototype.removeUsers = function(network, channel, users) {
 	}
 
 	if (_.isArray(channel)) {
-		application.ChannelUsers.remove({network: network, nickname: {$in: users}}, {safe: false});
+		application.ChannelUsers.remove({network: key, nickname: {$in: users}}, {safe: false});
 	} else {
-		application.ChannelUsers.remove({network: network, channel: channel, nickname: {$in: users}}, {safe: false});
+		application.ChannelUsers.remove({network: key, channel: channel, nickname: {$in: users}}, {safe: false});
 	}
 	// send the update out
 };
@@ -166,14 +247,16 @@ ChannelManager.prototype.removeUsers = function(network, channel, users) {
  *
  * @method updateUsers
  * @param {ObjectID} key A valid Mongo ObjectID for the networks collection
- * @param {String} network The name of the network
  * @param {Array} users A valid users array
  * @param {Object} values A hash of keys and values to be replaced in the users array
  * @return void
  */
-ChannelManager.prototype.updateUsers = function(key, network, users, values) {
+ChannelManager.prototype.updateUsers = function(key, users, values) {
 	_.each(users, function(u) {
-		var s = {network: network, nickname: u};
+		var s = {
+			network: key,
+			nickname: new RegExp('^' + helper.escape(u) + '$', 'i')
+		};
 
 		application.ChannelUsers.find(s).toArray(function(err, records) {
 			if (err || !records) {
@@ -201,19 +284,19 @@ ChannelManager.prototype.updateUsers = function(key, network, users, values) {
  * @method updateModes
  * @param {ObjectID} key A valid Mongo ObjectID for the networks collection
  * @param {Object} capab A valid capabilities object from the 'registered' event
- * @param {String} network Network name
  * @param {String} channel Channel name
  * @param {String} mode Mode string
  * @return void
  */
-ChannelManager.prototype.updateModes = function(key, capab, network, channel, mode) {
-	var us = {};
 
+ChannelManager.prototype.updateModes = function(key, capab, channel, mode) {
+	var us = {};
+	
 	channel = channel.toLowerCase();
 
 	this.getChannel(key, channel)
 		.then(function(chan) {
-			application.ChannelUsers.find({network: network, channel: channel}).toArray(function(err, users) {
+			application.ChannelUsers.find({network: key, channel: channel}).toArray(function(err, users) {
 				if (err || !users) {
 					return false;
 				}
@@ -237,7 +320,7 @@ ChannelManager.prototype.updateModes = function(key, capab, network, channel, mo
 					u.sort = prefix.sort;
 					u.prefix = prefix.prefix;
 
-					application.ChannelUsers.update({network: network, channel: channel, nickname: u.nickname}, u, {safe: false});
+					application.ChannelUsers.update({network: key, channel: channel, nickname: u.nickname}, u, {safe: false});
 				});
 				// update users now
 			});

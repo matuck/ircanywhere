@@ -1,5 +1,5 @@
 App.MessagesController = Ember.ArrayController.extend(App.Notification, {
-	needs: ['index'],
+	needs: ['index', 'network'],
 	events: [],
 	readDocs: [],
 	unreadNotifications: [],
@@ -27,9 +27,9 @@ App.MessagesController = Ember.ArrayController.extend(App.Notification, {
 				return accum;
 			}
 
-			if ((item.network === tab.networkName || item.network === network.name) &&
+			if ((item.network === tab.network || item.network === network._id) &&
 				((tab.type === 'network' && item.target === '*') ||
-				(tab.type === 'query' && (item.target === tab.target || (item.target === network.nick && item.message.nickname.toLowerCase() === tab.target))) ||
+				(tab.type === 'query' && (Helpers.compareStrings(item.target, tab.target, true) || (Helpers.compareStrings(item.target, network.nick, true) && Helpers.compareStrings(item.message.nickname, tab.target, true)))) ||
 				(tab.type === 'channel' && item.target === tab.target))) {
 				// messy conditional
 				accum.pushObject(item);
@@ -46,9 +46,9 @@ App.MessagesController = Ember.ArrayController.extend(App.Notification, {
 				return accum;
 			}
 				
-			if ((item.network === tab.networkName || item.network === network.name) &&
+			if ((item.network === tab.network || item.network === network._id) &&
 				((tab.type === 'network' && item.target === '*') ||
-				(tab.type === 'query' && (item.target === tab.target || (item.target === network.nick && item.message.nickname.toLowerCase() === tab.target))) ||
+				(tab.type === 'query' && (Helpers.compareStrings(item.target, tab.target, true) || (Helpers.compareStrings(item.target, network.nick, true) && Helpers.compareStrings(item.message.nickname, tab.target, true)))) ||
 				(tab.type === 'channel' && item.target === tab.target))) {
 				// messy conditional
 				accum.removeObject(item);
@@ -77,7 +77,7 @@ App.MessagesController = Ember.ArrayController.extend(App.Notification, {
 		});
 
 		return proxy.slice(slice);
-	}.property('content.@each', 'socket.tabs.@each.selected', 'socket.tabs.@each.messageLimit'),
+	}.property('content.@each', 'controllers.index.tabId', 'socket.tabs.@each.messageLimit'),
 
 	markAsRead: function() {
 		var query = {'$in': []};
@@ -146,7 +146,7 @@ App.MessagesController = Ember.ArrayController.extend(App.Notification, {
 				if ((type === 'privmsg' || type === 'action' || type === 'notice') && el.get(0)) {
 					var topOffset = el[0].offsetTop;
 
-					if ((top === 0 || top < topOffset && topOffset < bottom) && App.get('isActive')) {
+					if ((top < topOffset && topOffset < bottom) && self.get('controllers.index.isActive')) {
 						item.set('read', true);
 						
 						if (self.readDocs.indexOf(item._id) === -1) {
@@ -188,12 +188,21 @@ App.MessagesController = Ember.ArrayController.extend(App.Notification, {
 		}
 	},
 
+	showUnreadBar: function () {
+		var self = this;
+
+		Ember.run.later(self, function() {
+			var unread = this.get('controllers.network.selectedTab.unread');
+			self.set('controllers.network.unreadBar', (unread > 0));
+		}, 250);
+	}.observes('controllers.network.selectedTab.unread'),
+
 	ready: function() {
 		this.set('events', this.socket.get('events'));
 	},
 
 	updated: function() {
-		var tab = this.get('parentController.selectedTab'),
+		var tab = this.get('controllers.network.selectedTab'),
 			container = Ember.$('.backlog');
 
 		if (!tab || tab.loading === false || container.length === 0) {
@@ -213,14 +222,14 @@ App.MessagesController = Ember.ArrayController.extend(App.Notification, {
 	newTabMessage: function(object) {
 		var self = this;
 
-		if (App.get('isActive') || !(object.get('extra.highlight') && (!object.read || object.unread))) {
+		if ((object.get('extra.highlight') && (!object.read || object.unread)) === false) {
 			return false;
 		}
 
 		var title = object.get('message.nickname') + ' - ' + object.target,
 			Notify = this.notify(title, {
 				body: object.get('message.message'),
-				tag: object.network + '/' + object.target,
+				tag: object._id + '/' + object.target,
 				id: object._id,
 				timeout: 5,
 				onClose: function(obj) {
@@ -229,6 +238,7 @@ App.MessagesController = Ember.ArrayController.extend(App.Notification, {
 			});
 
 		this.unreadNotifications.pushObject(Notify);
+		// show notification
 	},
 
 	onHighlightBurst: function(object, backlog) {
@@ -254,6 +264,8 @@ App.MessagesController = Ember.ArrayController.extend(App.Notification, {
 	},
 
 	onEventVisible: function(id, item) {
+		var self = this;
+
 		if (!item.get('extra.highlight')) {
 			return false;
 		}
@@ -262,7 +274,7 @@ App.MessagesController = Ember.ArrayController.extend(App.Notification, {
 		var tab = this.get('socket.tabs').findBy('_id', this.get('controllers.index.tabId'));
 
 		this.unreadNotifications.forEach(function(item) {
-			if (!(App.get('isActive') && item.tag === tab.networkName + '/' + tab.title)) {
+			if (!(self.get('controllers.index.isActive') && item.tag === tab.network + '/' + tab.title)) {
 				return false;
 			}
 			// tab or window isnt active

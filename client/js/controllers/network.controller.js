@@ -1,5 +1,7 @@
 App.NetworkController = Ember.ObjectController.extend({
 	needs: ['index', 'messages'],
+	
+	unreadBar: false,
 
 	tabChanged: function() {
 		var tab = this.get('socket.tabs').findBy('_id', this.get('controllers.index.tabId'));
@@ -12,14 +14,14 @@ App.NetworkController = Ember.ObjectController.extend({
 			// delete this because it'll cause a circular reference
 
 			network.set('selectedTab', tab);
-			this.set('content', network);
+			this.set('model', network);
 			// set content.selectedTab (network) - so we can find the full selected tab object in
 			// the network's object for quick access
 
 			Ember.$('.main-view').removeClass('mobileChannels');
 		}
 		// update this.tab if we have a new selected tab
-	}.observes('controllers.index.tabId', 'socket.tabs.@each.selected'),
+	}.observes('controllers.index.tabId'),
 
 	markAllAsRead: function(id) {
 		var tab = this.get('socket.tabs').findBy('_id', id);
@@ -36,6 +38,8 @@ App.NetworkController = Ember.ObjectController.extend({
 		query.read = false;
 		events.setEach('unread', false);
 		tab.set('unread', 0);
+		tab.set('highlights', 0);
+		tab.set('showMessageBar', false);
 		// mark them as unread to hide the bar
 
 		this.socket.send('readEvents', query, {read: true});
@@ -58,7 +62,6 @@ App.NetworkController = Ember.ObjectController.extend({
 	},
 
 	gotoHighlight: function() {
-		console.log('goto first highlight');
 		// XXX
 	},
 
@@ -68,7 +71,7 @@ App.NetworkController = Ember.ObjectController.extend({
 			title = (selectedTab) ? [selectedTab.get('title'), '-', App.get('defaultTitle')] : [App.get('defaultTitle')],
 			unread = 0,
 			highlights = 0,
-			route = App.__container__.cache.dict['route:network'];
+			route = App.__container__.cache['route:network'];
 		// this will probably make Ember people mad but it works and I dunno how to get to the router from here
 		// maybe the update title function shouldn't be in the router? huh?.. idk
 
@@ -76,7 +79,6 @@ App.NetworkController = Ember.ObjectController.extend({
 			unread += tab.unread;
 			highlights += tab.highlights;
 		});
-
 		
 		if (unread > 0) {
 			title.unshift('*');

@@ -1,11 +1,16 @@
-IRCAnywhere
+IRCAnywhere |TravisBuild|
 ===========
 
-**IRCAnywhere** is an open source web based `IRC bonucer`_  application written in javascript. It's designed to be a free alternative to IRCCloud_. Unlike IRCCloud where you have little control over uptime and the privacy of your users, **IRCAnywhere** aims to give the control to you.
+**IRCAnywhere** is an open source web based `IRC bouncer`_  application written in javascript. It's designed to be a free alternative to IRCCloud_. Unlike IRCCloud where you have little control over uptime and the privacy of your users, **IRCAnywhere** aims to give the control to you.
 
 .. image:: http://ircanywhere.com/img/banner1.png
 
 Full documentation for **IRCAnywhere** is available at `http://ircanywhere.readthedocs.org/`_
+
+Release v0.2-beta
+~~~~~~~~~~~~~~~~~
+
+Release `v0.2-beta` is the second installment of **IRCAnywhere**, which includes a large amount of new features and bug fixes since the previous release, `v0.2-alpha`. This release contains non backwards compatible database changes, when starting the server, it will warn you about this and advise a clean out of a number of collections `channelUsers` and `events` to ensure that nothing breaks.
 
 History
 ~~~~~~~
@@ -33,9 +38,7 @@ You can either clone the github repository, or install from the ``0.2-alpha`` re
 Pre-requisites
 ~~~~~~~~~~~~~~
 
-Before we start, make sure you have `Node.js and Npm`_ installed. **IRCAnywhere** also needs gulp_ to build client files. You can install gulp by running (may need to prefix command with ``sudo`` if you get permission errors): ::
-
-    $ npm install -g gulp
+Before we start, make sure you have `Node.js and Npm`_ installed.
 
 Install Script
 ~~~~~~~~~~~~~~
@@ -70,7 +73,7 @@ We need to first install Node dependencies: ::
 
 Next we'll build the client source: ::
 
-    $ gulp
+    $ npm run gulp
 
 Finally, rename the sample configuration file ``config.example.json`` to ``config.json``.
 
@@ -134,13 +137,15 @@ Any bugs (preferably) should be reported via the `issues page`_ on this reposito
 
 Come talk to us on the #ircanywhere channel in freenode.
 
-.. _`IRC bonucer`: http://en.wikipedia.org/wiki/BNC_%28software%29#IRC
+.. _`IRC bouncer`: http://en.wikipedia.org/wiki/BNC_%28software%29#IRC
 .. _`configuration file`: #configuration-file
 .. _IRCCloud: https://www.irccloud.com
 .. _http://ircanywhere.readthedocs.org/: http://ircanywhere.readthedocs.org/
 .. _`Node.js and Npm`: http://ircanywhere.readthedocs.org/en/latest/pre_requirements.html#installing-node-js-and-npm
-.. _mon: https://github.com/visionmedia/mon
+.. _mon: https://github.com/tj/mon
 .. _`issues page`: https://github.com/ircanywhere/ircanywhere/issues
 .. _`reverse proxies`: http://ircanywhere.readthedocs.org/en/latest/reverse_proxies.html
 .. _gulp: http://gulpjs.com/
 .. _`installing MongoDB`: http://ircanywhere.readthedocs.org/en/latest/pre_requirements.html#installing-mongodb
+.. |TravisBuild| image:: https://travis-ci.org/ircanywhere/ircanywhere.svg?branch=development
+    :target: https://travis-ci.org/ircanywhere/ircanywhere

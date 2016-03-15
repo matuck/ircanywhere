@@ -8,8 +8,8 @@
 */
 
 var _ = require('lodash'),
-	crypto = require('crypto'),
 	util = require('util'),
+	fs = require('fs'),
 	factory = require('irc-factory').Api,
 	helper = require('../lib/helpers').Helpers;
 
@@ -45,10 +45,10 @@ function IRCFactory() {
  * @member {Object} options The `irc-factory` options to use
  */
 IRCFactory.prototype.options = {
-	events: "tcp://127.0.0.1:31920",
-	rpc: "tcp://127.0.0.1:31930",
+	events: 'tcp://127.0.0.1:31920',
+	rpc: 'tcp://127.0.0.1:31930',
 	automaticSetup: true
-}
+};
 
 /**
  * Initiates the irc factory and it's connection and sets up an event handler
@@ -66,7 +66,11 @@ IRCFactory.prototype.init = function() {
 	// connect to our uplinks
 
 	this.events.on('message', function(message) {
-		if (message.event === 'synchronize') {
+		if (message.event === 'metadata') {
+			if (message.pid) {
+				fs.writeFile(__dirname + '/../irc-factory.pid', message.pid);
+			}
+		} else if (message.event === 'synchronize') {
 			networkManager.getClients(message.keys)
 				.then(function(networks) {
 					var keys = _.keys(networks),
@@ -74,6 +78,7 @@ IRCFactory.prototype.init = function() {
 
 					_.each(message.keys, function(key) {
 						networkManager.changeStatus({_id: key}, networkManager.flags.connected);
+						self.send(key, 'ping', []);
 					});
 					
 					_.each(difference, function(net) {
@@ -89,7 +94,7 @@ IRCFactory.prototype.init = function() {
 			self.handleEvent(message.event, message.message);
 		}
 	});
-}
+};
 
 /**
  * Handles incoming factory events, events are expected to come in the following format: ::
@@ -105,7 +110,7 @@ IRCFactory.prototype.init = function() {
  * More advanced docs can be found at https://github.com/ircanywhere/irc-factory/wiki/Events
  *
  * @method handleEvent
- * @param {Array[String]} event A valid event array from irc-factory `['52d3fc718132f8486dcde1d0', 'privmsg']`
+ * @param {[String]} event A valid event array from irc-factory `['52d3fc718132f8486dcde1d0', 'privmsg']`
  * @param {Object} object A valid event object from irc-factory
  * @return void
  */
@@ -125,9 +130,9 @@ IRCFactory.prototype.handleEvent = function(event, object) {
 	}
 	
 	if (application.verbose) {
-		console.log(new Date().toJSON(), '-', util.inspect({key: key, event: e, data: object}, {colors: true}));
+		console.log(new Date().toJSON(), '<< INCOMING <<', util.inspect({key: key, event: e, data: object}, {colors: true}));
 	}
-}
+};
 
 /**
  * Sends the command to `irc-factory` to create a new irc client with the given settings.
@@ -142,12 +147,12 @@ IRCFactory.prototype.create = function(network) {
 	// generate a key, we just use the network id because it's unique per network
 	// and doesn't need to be linked to a client, saves us hashing keys all the time
 
-	networkManager.changeStatus({_id: key}, networkManager.flags.connecting);
+	networkManager.changeStatus({_id: network._id}, networkManager.flags.connecting);
 	// mark the network as connecting
 
 	this.rpc.emit('createClient', key, network);
 	application.logger.log('info', 'creating irc client', helper.cleanObjectIds(_.omit(Clients[key], 'internal')));
-}
+};
 
 /**
  * Sends the command to destroy a client with the given key. If the client doesn't exist
@@ -175,7 +180,7 @@ IRCFactory.prototype.destroy = function(key, forced) {
 	}
 
 	this.rpc.emit('destroyClient', key.toString());
-}
+};
 
 /**
  * Calls an RPC command on the irc-factory client, usually used to send
@@ -189,6 +194,10 @@ IRCFactory.prototype.destroy = function(key, forced) {
  */
 IRCFactory.prototype.send = function(key, command, args) {
 	this.rpc.emit('call', key.toString(), command, args);
-}
+
+	if (application.verbose) {
+		console.log(new Date().toJSON(), '>> OUTGOING >>', util.inspect({key: key, event: command, data: args}, {colors: true}));
+	}
+};
 
 exports.IRCFactory = IRCFactory;
